@@ -1,4 +1,12 @@
-import { WalletClient, type WalletInterface } from '@bsv/sdk';
+import type { InscribeRequest, InscribeResponse, OneSatContext } from '@1sat/actions';
+import { WalletClient, Utils, type WalletInterface } from '@bsv/sdk';
+import type { MintTransactionLookupProvider } from '@/adapters/ordinals/minting-adapter';
+import { OneSatMintingAdapter } from '@/adapters/ordinals/onesat-minting.adapter';
+import {
+  deriveAndSignBrc100Destination,
+  normalizeBrc100WalletError,
+  normalizeBsvNetwork,
+} from '@/adapters/wallets/brc100-shared';
 import {
   UnsupportedWalletOperationError,
   type WalletAdapter,
@@ -7,7 +15,6 @@ import {
 import {
   AUTH_BRC100_PROTOCOL_ID,
   DEFAULT_AUTH_KEY_ID,
-  deriveP2PKHScriptFromPublicKey,
   extractNonceFromChallenge,
   isValidCompressedPublicKey,
 } from '@/lib/auth/crypto-verify';
@@ -17,6 +24,8 @@ import type {
   PaymentOutput,
   SignatureResult,
   TransactionResult,
+  VerifiedWalletDestination,
+  WalletCapabilities,
   WalletConnectionResult,
   WalletIdentity,
 } from '@/types/wallet';
@@ -57,10 +66,31 @@ export interface YoursInjectedExtension {
 export interface YoursWalletAdapterOptions {
   /** Optional explicit BRC-100 WalletInterface (e.g., window.CWI or test substrate) */
   brc100Wallet?: WalletInterface;
-  /** Optional explicit window.yours injected extension object */
+  /** Optional explicit window.yours injected extension object (authentication-only fallback) */
   injectedExtension?: YoursInjectedExtension;
   /** Originator domain passed to BRC-100 WalletClient */
   originator?: string;
+  /** Prefer legacy window.yours even when window.CWI exists (mostly for testing fallback behavior) */
+  preferLegacyExtension?: boolean;
+  /** Runtime mode passed from client context/server config for 1Sat minting */
+  appMode?: 'mock' | 'live';
+  /** Authoritative BSV network for live minting */
+  expectedNetwork?: 'main' | 'test';
+  /** Test-only gate enabling simulated BRC-100 live mint tests without env vars */
+  allowSimulatedLiveMint?: boolean;
+  /** Explicit mainnet approval gate */
+  allowMainnetMint?: boolean;
+  /** Optional 1Sat Stack API base URL */
+  apiBaseUrl?: string;
+  /** Optional lookup provider for extracting tx outputs if wallet omits AtomicBEEF */
+  lookupProvider?: MintTransactionLookupProvider;
+  /** Optional override for @1sat/actions inscribe.execute in unit tests */
+  customInscribeAction?: (
+    ctx: OneSatContext,
+    input: InscribeRequest
+  ) => Promise<InscribeResponse>;
+  /** Optional env override */
+  envSource?: Record<string, string | undefined>;
 }
 
 function getBrowserYoursExtension(): YoursInjectedExtension | undefined {
@@ -74,10 +104,10 @@ function getBrowserYoursExtension(): YoursInjectedExtension | undefined {
 }
 
 function hasBrowserWindowCWI(): boolean {
-  if (typeof globalThis === 'undefined') {
+  if (typeof window === 'undefined' || window === null) {
     return false;
   }
-  const win = globalThis as unknown as {
+  const win = window as unknown as {
     CWI?: unknown;
   };
   return typeof win.CWI === 'object' && win.CWI !== null;
@@ -99,12 +129,25 @@ function isYoursCompatibleVersion(version: string): boolean {
 /**
  * YoursWalletAdapter
  *
- * Implements explicit discovery and authentication for Yours Wallet without
- * automatic provider racing (`WalletClient('auto')` is NEVER used).
+ * Implements explicit discovery, authentication, key derivation, and 1Sat Ordinal
+ * minting for Yours Wallet without automatic provider racing (`WalletClient('auto')`
+ * is NEVER used).
+ *
+ * Note on `@1sat/react` (`WalletProvider` / `useWallet`):
+ * The official `@1sat/react` `WalletProvider` delegates connection to `@1sat/connect`'s
+ * `connectWallet()`, which calls `new WalletClient('auto')` and races `window.CWI` against
+ * loopback HandCash ports (`127.0.0.1:2121` / `127.0.0.1:3321`). Because this application
+ * prohibits automatic multi-wallet racing and requires explicit user provider selection, we
+ * implement `AppWalletProvider` (`src/context/wallet-context.tsx`) using explicit
+ * `YoursWalletAdapter` / `HandCashWalletAdapter` instances while calling `@1sat/actions`
+ * (`createContext` + `inscribe.execute`) directly over the active BRC-100 `WalletInterface`.
  *
  * Supports:
- * 1. BRC-100 `window.CWI` substrate (verified via `getVersion()` vendor prefix to reject HandCash).
- * 2. Injected `window.yours` browser extension (`connect`, `getPubKeys`, `signMessage` BSM).
+ * 1. Primary: BRC-100 `window.CWI` substrate (`new WalletClient('window.CWI', originator)`),
+ *    supporting authentication (`canAuthenticate`), derived destination proofs, and 1Sat
+ *    Ordinal minting (`canMintOrdinal: true`). Rejects HandCash (`PROVIDER_MISMATCH`).
+ * 2. Compatibility Fallback: Injected legacy `window.yours` extension (`connect`, `getPubKeys`,
+ *    `signMessage` BSM), strictly marked as authentication-only (`canMintOrdinal: false`).
  */
 export class YoursWalletAdapter implements WalletAdapter {
   public readonly provider = 'yours' as const;
@@ -112,13 +155,67 @@ export class YoursWalletAdapter implements WalletAdapter {
   private activeBrc100Wallet: WalletInterface | null = null;
   private activeExtension: YoursInjectedExtension | null = null;
   private cachedIdentity: WalletIdentity | null = null;
+  private cachedDestination: VerifiedWalletDestination | null = null;
 
   constructor(options: YoursWalletAdapterOptions = {}) {
     this.options = options;
   }
 
+  public getWalletInterface(): WalletInterface | null {
+    return this.activeBrc100Wallet;
+  }
+
+  public getCapabilities(): WalletCapabilities {
+    if (this.activeBrc100Wallet) {
+      return {
+        canAuthenticate: true,
+        canMintOrdinal: true,
+        canSendOutputs: false,
+        supportsBrc100: true,
+        connectionTransport: 'brc100-cwi',
+      };
+    }
+    if (this.activeExtension) {
+      return {
+        canAuthenticate: true,
+        canMintOrdinal: false,
+        canSendOutputs: false,
+        supportsBrc100: false,
+        connectionTransport: 'legacy-yours',
+      };
+    }
+    if (
+      !this.options.preferLegacyExtension &&
+      (this.options.brc100Wallet || hasBrowserWindowCWI())
+    ) {
+      return {
+        canAuthenticate: true,
+        canMintOrdinal: true,
+        canSendOutputs: false,
+        supportsBrc100: true,
+        connectionTransport: 'brc100-cwi',
+      };
+    }
+    if (this.options.injectedExtension || getBrowserYoursExtension()) {
+      return {
+        canAuthenticate: true,
+        canMintOrdinal: false,
+        canSendOutputs: false,
+        supportsBrc100: false,
+        connectionTransport: 'legacy-yours',
+      };
+    }
+    return {
+      canAuthenticate: false,
+      canMintOrdinal: false,
+      canSendOutputs: false,
+      supportsBrc100: false,
+      connectionTransport: 'none',
+    };
+  }
+
   public async isAvailable(): Promise<boolean> {
-    if (this.options.brc100Wallet) {
+    if (!this.options.preferLegacyExtension && this.options.brc100Wallet) {
       try {
         const { version } = await this.options.brc100Wallet.getVersion({});
         return isYoursCompatibleVersion(version);
@@ -126,17 +223,17 @@ export class YoursWalletAdapter implements WalletAdapter {
         return false;
       }
     }
-    if (this.options.injectedExtension || getBrowserYoursExtension()) {
-      return true;
-    }
-    if (hasBrowserWindowCWI()) {
+    if (!this.options.preferLegacyExtension && hasBrowserWindowCWI()) {
       try {
         const cwiClient = new WalletClient('window.CWI', this.options.originator);
         const { version } = await cwiClient.getVersion({});
         return isYoursCompatibleVersion(version);
       } catch {
-        return false;
+        // Check legacy window.yours below if CWI probe fails
       }
+    }
+    if (this.options.injectedExtension || getBrowserYoursExtension()) {
+      return true;
     }
     return false;
   }
@@ -144,10 +241,12 @@ export class YoursWalletAdapter implements WalletAdapter {
   public async connect(): Promise<WalletConnectionResult> {
     // Path 1: Explicit BRC-100 WalletInterface or browser `window.CWI`
     const candidateBrc100 =
-      this.options.brc100Wallet ??
-      (hasBrowserWindowCWI()
-        ? new WalletClient('window.CWI', this.options.originator)
-        : null);
+      this.options.preferLegacyExtension
+        ? null
+        : (this.options.brc100Wallet ??
+          (hasBrowserWindowCWI()
+            ? new WalletClient('window.CWI', this.options.originator)
+            : null));
 
     if (candidateBrc100) {
       try {
@@ -160,7 +259,18 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        await candidateBrc100.waitForAuthentication({});
+        const authRes = await candidateBrc100.waitForAuthentication({});
+        if (
+          (authRes as { authenticated?: boolean } | null)?.authenticated ===
+          false
+        ) {
+          throw new WalletConnectionError(
+            'yours',
+            'WALLET_LOCKED',
+            'Yours Wallet BRC-100 interface is locked or unauthenticated.'
+          );
+        }
+
         const { publicKey } = await candidateBrc100.getPublicKey({
           identityKey: true,
         });
@@ -174,20 +284,19 @@ export class YoursWalletAdapter implements WalletAdapter {
         }
 
         const netResult = await candidateBrc100.getNetwork({});
-        const rawNet = String(netResult.network ?? '').toLowerCase();
-        const network: 'main' | 'test' =
-          rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
+        const network = normalizeBsvNetwork(netResult.network);
 
-        // Do NOT silently derive a payout destination from the BRC-100 root identity key,
-        // because Yours Wallet payment/ordinal keys differ from the root identityKey.
-        // Initial community ownership is determined authoritatively from the verified
-        // locking script of the minted 1Sat Ordinal output.
+        // Do NOT silently derive a payout destination from the BRC-100 root identityKey.
+        // Call `deriveDestination()` explicitly to derive and cryptographically prove a payment key.
         this.activeBrc100Wallet = candidateBrc100;
         this.activeExtension = null;
+        this.cachedDestination = null;
+        const capabilities = this.getCapabilities();
         this.cachedIdentity = {
           provider: 'yours',
           identityKey: normalizedPubKey,
           publicKey: normalizedPubKey,
+          capabilities,
           network,
           displayName: 'Yours Wallet',
           version,
@@ -203,12 +312,13 @@ export class YoursWalletAdapter implements WalletAdapter {
           this.activeBrc100Wallet = null;
           this.activeExtension = null;
           this.cachedIdentity = null;
+          this.cachedDestination = null;
           throw normalizedErr;
         }
       }
     }
 
-    // Path 2: Injected `window.yours` extension
+    // Path 2: Legacy Injected `window.yours` extension (authentication-only fallback)
     const extension = this.options.injectedExtension ?? getBrowserYoursExtension();
     if (extension) {
       try {
@@ -223,29 +333,25 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        // Only derive a payout script when Yours extension explicitly exposes `bsvPubKey`
-        // (its dedicated BSV payment key). Never silently fall back to `identityPubKey`.
-        const explicitBsvPubKey = pubKeys.bsvPubKey?.trim().toLowerCase();
-        const payoutScript =
-          explicitBsvPubKey && isValidCompressedPublicKey(explicitBsvPubKey)
-            ? deriveP2PKHScriptFromPublicKey(explicitBsvPubKey)
-            : undefined;
-
         let network: 'main' | 'test' = 'main';
         if (extension.getNetwork) {
-          const rawNet = String(await extension.getNetwork()).toLowerCase();
-          network = rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
+          network = normalizeBsvNetwork(await extension.getNetwork());
         }
 
+        // Legacy window.yours extension cannot sign a derived BRC-100 payment-key proof;
+        // mark capabilities clearly as authentication-only (canMintOrdinal: false) and do not
+        // attach an unverified payoutScript.
         this.activeExtension = extension;
         this.activeBrc100Wallet = null;
+        this.cachedDestination = null;
+        const capabilities = this.getCapabilities();
         this.cachedIdentity = {
           provider: 'yours',
           identityKey: normalizedIdentityKey,
           publicKey: normalizedIdentityKey,
-          ...(payoutScript ? { payoutScript } : {}),
+          capabilities,
           network,
-          displayName: 'Yours Wallet (Extension)',
+          displayName: 'Yours Wallet (Legacy Extension)',
           version: 'yours-extension',
         };
 
@@ -254,6 +360,7 @@ export class YoursWalletAdapter implements WalletAdapter {
         this.activeBrc100Wallet = null;
         this.activeExtension = null;
         this.cachedIdentity = null;
+        this.cachedDestination = null;
         throw this.normalizeError(err);
       }
     }
@@ -276,6 +383,7 @@ export class YoursWalletAdapter implements WalletAdapter {
     this.activeBrc100Wallet = null;
     this.activeExtension = null;
     this.cachedIdentity = null;
+    this.cachedDestination = null;
   }
 
   public async getIdentity(): Promise<WalletIdentity> {
@@ -286,7 +394,47 @@ export class YoursWalletAdapter implements WalletAdapter {
         'Yours Wallet is not connected. Call connect() first.'
       );
     }
-    return { ...this.cachedIdentity };
+    return {
+      ...this.cachedIdentity,
+      capabilities: this.getCapabilities(),
+    };
+  }
+
+  public async deriveDestination(options?: {
+    keyID?: string;
+  }): Promise<VerifiedWalletDestination> {
+    if (!this.cachedIdentity) {
+      throw new WalletConnectionError(
+        'yours',
+        'AUTHENTICATION_FAILED',
+        'Yours Wallet is not connected. Call connect() first.'
+      );
+    }
+
+    if (!this.activeBrc100Wallet) {
+      throw new UnsupportedWalletOperationError(
+        'yours',
+        'deriveDestination',
+        'Yours Wallet connected via legacy window.yours extension is authentication-only and cannot cryptographically prove a derived BRC-100 payment destination. Enable BRC-100 window.CWI support in Yours Wallet.'
+      );
+    }
+
+    const proof = await deriveAndSignBrc100Destination({
+      wallet: this.activeBrc100Wallet,
+      provider: 'yours',
+      identityKey: this.cachedIdentity.identityKey,
+      network: this.cachedIdentity.network,
+      ...(options?.keyID ? { keyID: options.keyID } : {}),
+    });
+
+    this.cachedDestination = proof;
+    this.cachedIdentity = {
+      ...this.cachedIdentity,
+      payoutScript: proof.lockingScript,
+      destinationProof: proof,
+    };
+
+    return proof;
   }
 
   public async signChallenge(challenge: string): Promise<SignatureResult> {
@@ -309,7 +457,7 @@ export class YoursWalletAdapter implements WalletAdapter {
 
     try {
       if (this.activeBrc100Wallet) {
-        const messageBytes = Array.from(Buffer.from(challenge, 'utf8'));
+        const messageBytes = Utils.toArray(challenge, 'utf8');
         const { signature } = await this.activeBrc100Wallet.createSignature({
           data: messageBytes,
           protocolID: AUTH_BRC100_PROTOCOL_ID,
@@ -318,7 +466,7 @@ export class YoursWalletAdapter implements WalletAdapter {
         });
 
         return {
-          signature: Buffer.from(signature).toString('hex').toLowerCase(),
+          signature: Utils.toHex(Array.from(signature)).toLowerCase(),
           publicKey: this.cachedIdentity.publicKey,
           challenge,
           keyID,
@@ -390,21 +538,50 @@ export class YoursWalletAdapter implements WalletAdapter {
       throw new UnsupportedWalletOperationError(
         'yours',
         'mintOrdinal',
-        'Live 1Sat Ordinal minting via Yours Wallet requires an active BRC-100 CWI substrate and APP_MODE="live".'
+        'Yours Wallet connected via legacy window.yours extension supports authentication only. Connect via the Yours BRC-100 (window.CWI) interface to mint 1Sat Ordinals.'
       );
     }
-    if (!input.destinationScript) {
-      throw new UnsupportedWalletOperationError(
-        'yours',
-        'mintOrdinal',
-        'Live 1Sat Ordinal minting requires an explicit verified P2PKH destinationScript (never derived silently from identityKey).'
-      );
-    }
-    throw new UnsupportedWalletOperationError(
-      'yours',
-      'mintOrdinal',
-      'Direct mainnet broadcasting via Yours Wallet is disabled while APP_MODE="mock". Use OneSatMintingAdapter only when APP_MODE="live" is explicitly authorized.'
-    );
+
+    const destinationScript =
+      input.destinationScript?.trim().toLowerCase() ||
+      this.cachedDestination?.lockingScript ||
+      (await this.deriveDestination()).lockingScript;
+
+    const minter = new OneSatMintingAdapter({
+      wallet: this.activeBrc100Wallet,
+      provider: 'yours',
+      network: this.cachedIdentity.network,
+      ...(this.options.appMode ? { appMode: this.options.appMode } : {}),
+      ...(this.options.allowSimulatedLiveMint !== undefined
+        ? { allowSimulatedLiveMint: this.options.allowSimulatedLiveMint }
+        : {}),
+      ...(this.options.allowMainnetMint !== undefined
+        ? { allowMainnetMint: this.options.allowMainnetMint }
+        : {}),
+      ...(this.options.apiBaseUrl ? { apiBaseUrl: this.options.apiBaseUrl } : {}),
+      ...(this.options.lookupProvider ? { lookupProvider: this.options.lookupProvider } : {}),
+      ...(this.options.customInscribeAction
+        ? { customInscribeAction: this.options.customInscribeAction }
+        : {}),
+      ...(this.options.envSource ? { envSource: this.options.envSource } : {}),
+    });
+
+    const minted = await minter.mintCommunityOrdinal({
+      communityId: input.metadata.communityId,
+      name: input.metadata.name,
+      description: input.metadata.description ?? `${input.metadata.name} Community`,
+      artworkUrl: input.metadata.artworkUrl ?? null,
+      destinationP2PKHScript: destinationScript,
+      network: this.cachedIdentity.network,
+    });
+
+    return {
+      txid: minted.txid,
+      vout: minted.vout,
+      origin: minted.origin,
+      lockingScript: minted.rawOutputScriptHex,
+      isMock: minted.isMock,
+    };
   }
 
   public async getNetwork(): Promise<'main' | 'test'> {
@@ -419,22 +596,10 @@ export class YoursWalletAdapter implements WalletAdapter {
   }
 
   private normalizeError(err: unknown): WalletConnectionError {
-    if (err instanceof WalletConnectionError) {
-      return err;
-    }
-    const message =
-      err instanceof Error ? err.message : 'Unknown Yours Wallet error';
-    const lower = message.toLowerCase();
-
-    if (lower.includes('reject') || lower.includes('denied') || lower.includes('cancel')) {
-      return new WalletConnectionError('yours', 'USER_REJECTED', message);
-    }
-    if (lower.includes('lock')) {
-      return new WalletConnectionError('yours', 'WALLET_LOCKED', message);
-    }
-    if (lower.includes('not found') || lower.includes('no wallet')) {
-      return new WalletConnectionError('yours', 'WALLET_NOT_FOUND', message);
-    }
-    return new WalletConnectionError('yours', 'AUTHENTICATION_FAILED', message);
+    return normalizeBrc100WalletError(
+      'yours',
+      err,
+      'Yours Wallet extension / window.CWI is not reachable.'
+    );
   }
 }

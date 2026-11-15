@@ -7,7 +7,11 @@ import {
   YoursWalletAdapter,
   type YoursInjectedExtension,
 } from '../../src/adapters/wallets/yours.adapter.js';
-import { HandCashWalletAdapter } from '../../src/adapters/wallets/handcash.adapter.js';
+import {
+  HandCashWalletAdapter,
+  HANDCASH_FALLBACK_BRIDGE_URL,
+  HANDCASH_PRIMARY_BRIDGE_URL,
+} from '../../src/adapters/wallets/handcash.adapter.js';
 import {
   UnsupportedWalletOperationError,
   WalletConnectionError,
@@ -20,6 +24,12 @@ import {
   WalletAuthError,
   WalletAuthService,
 } from '../../src/lib/auth/auth-service.js';
+import {
+  DESTINATION_BRC100_PROTOCOL_ID,
+  deriveP2PKHScriptFromPublicKey,
+  formatDestinationOwnershipProofMessage,
+  verifyDestinationOwnershipProof,
+} from '../../src/lib/auth/crypto-verify.js';
 import { SessionStore } from '../../src/lib/auth/session-service.js';
 import { WalletConnectionStateManager } from '../../src/lib/auth/wallet-state.js';
 
@@ -427,7 +437,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     }
   });
 
-  it('6. Throws UnsupportedWalletOperationError for unimplemented Phase 5 payment operations and unsupported live minting in mock mode', async () => {
+  it('6. Throws UnsupportedWalletOperationError for unimplemented Phase 5 payment operations and legacy auth-only minting, and blocks live BRC-100 minting in mock mode', async () => {
     const mockAdapter = new MockWalletAdapter();
     await mockAdapter.connect();
 
@@ -440,6 +450,13 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     });
     await yoursAdapter.connect();
 
+    const yoursLegacyExt = createYoursInjectedExtension('yours-legacy-auth-only');
+    const yoursLegacyAdapter = new YoursWalletAdapter({
+      injectedExtension: yoursLegacyExt.extension,
+    });
+    await yoursLegacyAdapter.connect();
+    expect(yoursLegacyAdapter.getCapabilities().canMintOrdinal).toBe(false);
+
     const handcashSub = createBRC100WalletSubstrate({
       seedLabel: 'handcash-unsupported-op',
       version: 'handcash-1.4.0',
@@ -449,7 +466,12 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     });
     await handcashAdapter.connect();
 
-    for (const adapter of [mockAdapter, yoursAdapter, handcashAdapter]) {
+    for (const adapter of [
+      mockAdapter,
+      yoursAdapter,
+      yoursLegacyAdapter,
+      handcashAdapter,
+    ]) {
       await expect(
         adapter.sendOutputs([
           {
@@ -461,36 +483,33 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
       ).rejects.toThrowError(UnsupportedWalletOperationError);
     }
 
-    for (const liveAdapter of [yoursAdapter, handcashAdapter]) {
-      await expect(
-        liveAdapter.mintOrdinal({
-          contentBase64: 'dGVzdA==',
-          contentType: 'application/json',
-          metadata: {
-            app: 'community-platform',
-            type: 'ord',
-            name: 'Test Community',
-            communityId: '00000000-0000-0000-0000-000000000001',
-            schemaVersion: 1,
-            platform: 'community-platform',
-          },
-        })
-      ).rejects.toThrowError(UnsupportedWalletOperationError);
-    }
-
-    // MockWalletAdapter supports simulated 1Sat Ordinal minting in Phase 3
-    const mockMintResult = await mockAdapter.mintOrdinal({
+    const mintInput = {
       contentBase64: 'dGVzdA==',
       contentType: 'application/json',
       metadata: {
-        app: 'community-platform',
-        type: 'ord',
+        app: 'community-platform' as const,
+        type: 'ord' as const,
         name: 'Test Community',
         communityId: '00000000-0000-0000-0000-000000000001',
-        schemaVersion: 1,
-        platform: 'community-platform',
+        schemaVersion: 1 as const,
+        platform: 'community-platform' as const,
       },
-    });
+    };
+
+    // Legacy window.yours extension is authentication-only
+    await expect(yoursLegacyAdapter.mintOrdinal(mintInput)).rejects.toThrowError(
+      UnsupportedWalletOperationError
+    );
+
+    // Live BRC-100 substrates cannot mint while APP_MODE="mock"
+    for (const liveAdapter of [yoursAdapter, handcashAdapter]) {
+      await expect(liveAdapter.mintOrdinal(mintInput)).rejects.toThrow(
+        /disabled while APP_MODE is "mock"/i
+      );
+    }
+
+    // MockWalletAdapter supports simulated 1Sat Ordinal minting in mock mode
+    const mockMintResult = await mockAdapter.mintOrdinal(mintInput);
     expect(mockMintResult.isMock).toBe(true);
     expect(mockMintResult.origin).toBe(`${mockMintResult.txid}_0`);
   });
@@ -1065,5 +1084,312 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     });
     expect(verified.activeWallet.network).toBe('main');
     expect(verified.activeWallet.payoutScript).toBeNull();
+  });
+
+  it('16. Retains Yours BRC-100 WalletInterface (window.CWI) and accurately reports capabilities vs legacy window.yours', async () => {
+    const yoursSub = createBRC100WalletSubstrate({
+      seedLabel: 'yours-cwi-retain',
+      version: 'yours-3.0.0',
+      network: 'testnet',
+    });
+    const yoursCwi = new YoursWalletAdapter({
+      brc100Wallet: yoursSub.walletClient,
+    });
+
+    const conn = await yoursCwi.connect();
+    expect(conn.network).toBe('test');
+    expect(yoursCwi.getWalletInterface()).toBe(yoursSub.walletClient);
+    expect(yoursCwi.getCapabilities()).toEqual({
+      canAuthenticate: true,
+      canMintOrdinal: true,
+      canSendOutputs: false,
+      supportsBrc100: true,
+      connectionTransport: 'brc100-cwi',
+    });
+
+    // Global window.CWI detection
+    const globalRef = globalThis as unknown as { window?: { CWI?: unknown } };
+    const previousWindow = globalRef.window;
+    globalRef.window = { CWI: yoursSub.walletClient };
+    try {
+      const detectedAdapter = new YoursWalletAdapter();
+      expect(await detectedAdapter.isAvailable()).toBe(true);
+      expect(detectedAdapter.getCapabilities().connectionTransport).toBe(
+        'brc100-cwi'
+      );
+      const detectedConn = await detectedAdapter.connect();
+      expect(detectedConn.identityKey).toBe(yoursSub.identityKeyHex);
+      expect(detectedAdapter.getWalletInterface()).not.toBeNull();
+    } finally {
+      if (previousWindow === undefined) {
+        delete globalRef.window;
+      } else {
+        globalRef.window = previousWindow;
+      }
+    }
+
+    // Legacy window.yours exposes auth-only capabilities
+    const legacy = createYoursInjectedExtension('yours-legacy-caps');
+    const legacyAdapter = new YoursWalletAdapter({
+      injectedExtension: legacy.extension,
+    });
+    await legacyAdapter.connect();
+    expect(legacyAdapter.getWalletInterface()).toBeNull();
+    expect(legacyAdapter.getCapabilities()).toEqual({
+      canAuthenticate: true,
+      canMintOrdinal: false,
+      canSendOutputs: false,
+      supportsBrc100: false,
+      connectionTransport: 'legacy-yours',
+    });
+  });
+
+  it('17. Probes HandCash Desktop BRC-100 bridge endpoints (2121 -> 3321), checks version, and normalizes lock/rejection/network errors', async () => {
+    const hcSub = createBRC100WalletSubstrate({
+      seedLabel: 'handcash-fallback-probe',
+      version: 'handcash-1.5.0',
+      network: 'testnet',
+    });
+
+    const probedEndpoints: string[] = [];
+    const fallbackAdapter = new HandCashWalletAdapter({
+      clientFactory: (endpoint) => {
+        probedEndpoints.push(endpoint);
+        if (endpoint === HANDCASH_PRIMARY_BRIDGE_URL) {
+          return {
+            async getVersion() {
+              throw new Error('fetch failed ECONNREFUSED');
+            },
+          } as unknown as WalletInterface;
+        }
+        return hcSub.walletClient;
+      },
+    });
+
+    const discovery = await fallbackAdapter.discoverBridge();
+    expect(discovery.available).toBe(true);
+    expect(discovery.version).toBe('handcash-1.5.0');
+    expect(probedEndpoints).toEqual([
+      HANDCASH_PRIMARY_BRIDGE_URL,
+      HANDCASH_FALLBACK_BRIDGE_URL,
+    ]);
+
+    const conn = await fallbackAdapter.connect();
+    expect(conn.provider).toBe('handcash');
+    expect(conn.identityKey).toBe(hcSub.identityKeyHex);
+    expect(conn.network).toBe('test');
+    expect(fallbackAdapter.getWalletInterface()).toBe(hcSub.walletClient);
+    expect(fallbackAdapter.getCapabilities()).toEqual({
+      canAuthenticate: true,
+      canMintOrdinal: true,
+      canSendOutputs: false,
+      supportsBrc100: true,
+      connectionTransport: 'brc100-http',
+    });
+
+    // Rejects non-HandCash version running on bridge port
+    const wrongVendorAdapter = new HandCashWalletAdapter({
+      clientFactory: () =>
+        createBRC100WalletSubstrate({
+          seedLabel: 'wrong-vendor-bridge',
+          version: 'yours-2.5.0',
+        }).walletClient,
+    });
+    await expect(wrongVendorAdapter.connect()).rejects.toMatchObject({
+      name: 'WalletConnectionError',
+      provider: 'handcash',
+      code: 'PROVIDER_MISMATCH',
+    });
+
+    // Normalizes locked wallet
+    const lockedAdapter = new HandCashWalletAdapter({
+      brc100Wallet: {
+        async getVersion() {
+          return { version: 'handcash-1.5.0' };
+        },
+        async waitForAuthentication() {
+          return { authenticated: false } as unknown as {
+            authenticated: true;
+          };
+        },
+      } as unknown as WalletInterface,
+    });
+    await expect(lockedAdapter.connect()).rejects.toMatchObject({
+      name: 'WalletConnectionError',
+      provider: 'handcash',
+      code: 'WALLET_LOCKED',
+    });
+
+    // Normalizes user rejection
+    const rejectedAdapter = new HandCashWalletAdapter({
+      brc100Wallet: {
+        async getVersion() {
+          return { version: 'handcash-1.5.0' };
+        },
+        async waitForAuthentication() {
+          throw new Error('User rejected wallet approval prompt');
+        },
+      } as unknown as WalletInterface,
+    });
+    await expect(rejectedAdapter.connect()).rejects.toMatchObject({
+      name: 'WalletConnectionError',
+      provider: 'handcash',
+      code: 'USER_REJECTED',
+    });
+  });
+
+  it('18. Preserves explicit provider selection in discoverAvailableWallets + createExplicitWalletAdapter when both Yours and HandCash exist', async () => {
+    const yoursSub = createBRC100WalletSubstrate({
+      seedLabel: 'dual-yours-provider',
+      version: 'yours-2.9.0',
+    });
+    const handcashSub = createBRC100WalletSubstrate({
+      seedLabel: 'dual-handcash-provider',
+      version: 'handcash-1.5.0',
+    });
+
+    const discoveries = await discoverAvailableWallets({
+      appMode: 'live',
+      yoursOptions: { brc100Wallet: yoursSub.walletClient },
+      handcashOptions: { brc100Wallet: handcashSub.walletClient },
+    });
+
+    const yoursEntry = discoveries.find((d) => d.provider === 'yours');
+    const handcashEntry = discoveries.find((d) => d.provider === 'handcash');
+    expect(yoursEntry?.available).toBe(true);
+    expect(yoursEntry?.capabilities?.canMintOrdinal).toBe(true);
+    expect(handcashEntry?.available).toBe(true);
+    expect(handcashEntry?.capabilities?.canMintOrdinal).toBe(true);
+    expect(discoveries.find((d) => d.provider === 'mock')).toBeUndefined();
+
+    expect(() => createExplicitWalletAdapter(undefined)).toThrowError(
+      WalletConnectionError
+    );
+
+    const chosenHandcash = createExplicitWalletAdapter('handcash', {
+      handcashOptions: { brc100Wallet: handcashSub.walletClient },
+    });
+    const hcConn = await chosenHandcash.connect();
+    expect(hcConn.provider).toBe('handcash');
+    expect(hcConn.identityKey).toBe(handcashSub.identityKeyHex);
+
+    const chosenYours = createExplicitWalletAdapter('yours', {
+      yoursOptions: { brc100Wallet: yoursSub.walletClient },
+    });
+    const yConn = await chosenYours.connect();
+    expect(yConn.provider).toBe('yours');
+    expect(yConn.identityKey).toBe(yoursSub.identityKeyHex);
+  });
+
+  it('19. Derives and cryptographically verifies BRC-42 destination keys separate from identityKey, rejecting forged or unproven payoutScripts', async () => {
+    const yoursSub = createBRC100WalletSubstrate({
+      seedLabel: 'dest-proof-yours',
+      version: 'yours-2.8.0',
+      network: 'testnet',
+    });
+    const yoursAdapter = new YoursWalletAdapter({
+      brc100Wallet: yoursSub.walletClient,
+    });
+    const conn = await yoursAdapter.connect();
+
+    const destProof = await yoursAdapter.deriveDestination();
+    expect(destProof.publicKey).not.toBe(conn.identityKey);
+    expect(destProof.lockingScript).toBe(
+      deriveP2PKHScriptFromPublicKey(destProof.publicKey)
+    );
+    const verifiedProofResult = await verifyDestinationOwnershipProof({
+      provider: 'yours',
+      identityKey: conn.identityKey,
+      payoutScript: destProof.lockingScript,
+      destinationProof: destProof,
+    });
+    expect(verifiedProofResult.valid).toBe(true);
+
+    // Reject supplying payoutScript without cryptographic destinationProof
+    const ch1 = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const sig1 = await yoursAdapter.signChallenge(ch1.challengeText);
+    await expect(
+      authService.verifyChallengeAndAuthenticate({
+        challengeId: ch1.id,
+        provider: 'yours',
+        publicKey: sig1.publicKey,
+        identityKey: conn.identityKey,
+        signature: sig1.signature,
+        ...(sig1.keyID ? { keyID: sig1.keyID } : {}),
+        payoutScript: destProof.lockingScript,
+        expectedDomain: appDomain,
+      })
+    ).rejects.toMatchObject({
+      code: 'INVALID_DESTINATION_PROOF',
+      statusCode: 400,
+    });
+
+    // Reject spoofing a destinationProof with root identityKey instead of derived child key
+    const rootP2PKH = deriveP2PKHScriptFromPublicKey(conn.identityKey);
+    const rootMsg = formatDestinationOwnershipProofMessage({
+      provider: 'yours',
+      identityKey: conn.identityKey,
+      destinationPublicKey: conn.identityKey,
+      lockingScript: rootP2PKH,
+      keyID: 'destination-0',
+    });
+    const rootProto = new ProtoWallet(yoursSub.privateKey);
+    const { signature: forgedRootSig } = await rootProto.createSignature({
+      data: Utils.toArray(rootMsg, 'utf8'),
+      protocolID: DESTINATION_BRC100_PROTOCOL_ID,
+      keyID: 'destination-0',
+      counterparty: 'anyone',
+    });
+    const forgedProof = {
+      publicKey: conn.identityKey,
+      lockingScript: rootP2PKH,
+      signature: Utils.toHex(Array.from(forgedRootSig)).toLowerCase(),
+      signatureScheme: 'brc100' as const,
+      proofMessage: rootMsg,
+      protocolID: DESTINATION_BRC100_PROTOCOL_ID,
+      keyID: 'destination-0',
+      counterparty: 'anyone' as const,
+    };
+    const forgedCheck = await verifyDestinationOwnershipProof({
+      provider: 'yours',
+      identityKey: conn.identityKey,
+      payoutScript: rootP2PKH,
+      destinationProof: forgedProof,
+    });
+    expect(forgedCheck.valid).toBe(false);
+
+    // Authenticate first, then bind verified destination via updateVerifiedWalletDestination
+    const ch2 = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const sig2 = await yoursAdapter.signChallenge(ch2.challengeText);
+    const sessionRes = await authService.verifyChallengeAndAuthenticate({
+      challengeId: ch2.id,
+      provider: 'yours',
+      publicKey: sig2.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig2.signature,
+      ...(sig2.keyID ? { keyID: sig2.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+    expect(sessionRes.activeWallet.payoutScript).toBeNull();
+
+    const updatedWallet = await authService.updateVerifiedWalletDestination({
+      sessionToken: sessionRes.sessionToken,
+      provider: 'yours',
+      destinationProof: destProof,
+    });
+    expect(updatedWallet.payoutScript).toBe(destProof.lockingScript);
+
+    const sessionCtx = await authService.getSessionContext(
+      sessionRes.sessionToken
+    );
+    expect(sessionCtx?.activeWallet?.payoutScript).toBe(
+      destProof.lockingScript
+    );
   });
 });

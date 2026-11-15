@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { AppWalletProvider } from '@/context/wallet-context';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -12,10 +13,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const appMode = process.env.APP_MODE === 'live' ? 'live' : 'mock';
+  const bsvNetwork = process.env.BSV_NETWORK === 'main' ? 'main' : 'test';
+
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-950 text-slate-100 antialiased">
-        {children}
+        <AppWalletProvider appMode={appMode} bsvNetwork={bsvNetwork}>
+          {children}
+        </AppWalletProvider>
       </body>
     </html>
   );

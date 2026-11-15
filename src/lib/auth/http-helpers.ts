@@ -1,5 +1,35 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { z } from 'zod';
 import { SESSION_COOKIE_NAME, type CookieOptions } from '@/lib/auth/session-service';
+import type { WalletDestinationProof } from '@/types/wallet';
+
+export const DestinationProofSchema = z.object({
+  publicKey: z.string().min(66).max(66),
+  lockingScript: z.string().min(50).max(50),
+  address: z.string().optional(),
+  signature: z.string().min(8),
+  signatureScheme: z.enum(['brc100', 'ecdsa-sha256', 'bsm']),
+  proofMessage: z.string().min(10),
+  protocolID: z.tuple([z.union([z.literal(0), z.literal(1), z.literal(2)]), z.string()]).optional(),
+  keyID: z.string().optional(),
+  counterparty: z.string().optional(),
+});
+
+export function normalizeDestinationProofInput(
+  parsed: z.infer<typeof DestinationProofSchema>
+): WalletDestinationProof {
+  return {
+    publicKey: parsed.publicKey,
+    lockingScript: parsed.lockingScript,
+    signature: parsed.signature,
+    signatureScheme: parsed.signatureScheme,
+    proofMessage: parsed.proofMessage,
+    ...(parsed.address !== undefined ? { address: parsed.address } : {}),
+    ...(parsed.protocolID !== undefined ? { protocolID: parsed.protocolID } : {}),
+    ...(parsed.keyID !== undefined ? { keyID: parsed.keyID } : {}),
+    ...(parsed.counterparty !== undefined ? { counterparty: parsed.counterparty } : {}),
+  };
+}
 
 /**
  * Resolves the request domain used for challenge domain binding.

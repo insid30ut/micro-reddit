@@ -40,32 +40,38 @@ export async function discoverAvailableWallets(
   const handcashAdapter = new HandCashWalletAdapter(env.handcashOptions);
   const mockAdapter = new MockWalletAdapter(env.mockOptions);
 
-  const [yoursAvailable, handcashAvailable, mockAvailable] = await Promise.all([
+  const [yoursAvailable, handcashDiscovery, mockAvailable] = await Promise.all([
     yoursAdapter.isAvailable(),
-    handcashAdapter.isAvailable(),
+    handcashAdapter.discoverBridge(),
     mockAdapter.isAvailable(),
   ]);
+
+  const yoursCapabilities = yoursAdapter.getCapabilities();
+  const mockCapabilities = mockAdapter.getCapabilities();
 
   const results: WalletProviderDiscovery[] = [
     {
       provider: 'yours',
       displayName: 'Yours Wallet',
       available: yoursAvailable,
-      transport: env.yoursOptions?.injectedExtension
+      transport: yoursCapabilities.connectionTransport === 'legacy-yours'
         ? 'yours-extension'
-        : 'brc100-cwi',
+        : yoursCapabilities.connectionTransport === 'brc100-cwi'
+          ? 'brc100-cwi'
+          : 'none',
+      capabilities: yoursCapabilities,
       details: yoursAvailable
-        ? 'Yours Wallet detected and ready for explicit connection.'
-        : 'Yours Wallet extension / BRC-100 CWI not detected.',
+        ? `Yours Wallet detected (${yoursCapabilities.connectionTransport}) and ready for explicit connection.`
+        : 'Yours Wallet extension / BRC-100 window.CWI not detected.',
     },
     {
       provider: 'handcash',
       displayName: 'HandCash BRC-100 Wallet',
-      available: handcashAvailable,
-      transport: 'brc100-json-api',
-      details: handcashAvailable
-        ? 'HandCash BRC-100 local bridge detected and ready for explicit connection.'
-        : 'HandCash BRC-100 local bridge not detected.',
+      available: handcashDiscovery.available,
+      transport: handcashDiscovery.transport,
+      ...(handcashDiscovery.version ? { version: handcashDiscovery.version } : {}),
+      capabilities: handcashDiscovery.capabilities ?? handcashAdapter.getCapabilities(),
+      details: handcashDiscovery.details,
     },
   ];
 
@@ -75,6 +81,7 @@ export async function discoverAvailableWallets(
       displayName: 'Mock Test Wallet (Safe Local Mode)',
       available: mockAvailable,
       transport: 'mock',
+      capabilities: mockCapabilities,
       details: 'Deterministic @bsv/sdk ProtoWallet for local mock testing.',
     });
   }

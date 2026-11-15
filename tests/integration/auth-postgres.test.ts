@@ -43,6 +43,9 @@ async function login(
     signature: sig.signature,
     ...(sig.keyID ? { keyID: sig.keyID } : {}),
     ...(conn.payoutScript ? { payoutScript: conn.payoutScript } : {}),
+    ...(conn.destinationProof
+      ? { destinationProof: conn.destinationProof }
+      : {}),
     expectedDomain: DOMAIN,
     ...(currentSessionToken ? { currentSessionToken } : {}),
   });

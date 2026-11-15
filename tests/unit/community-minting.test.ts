@@ -1,12 +1,25 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+  Beef,
+  LockingScript,
+  PrivateKey,
+  ProtoWallet,
+  Transaction,
+  Utils,
+  type WalletInterface,
+} from '@bsv/sdk';
+import { buildInscriptionScript } from '@1sat/templates';
 import type { PrismaClient } from '@/generated/prisma/client';
 import { createTestPGlitePrisma } from '../helpers/pglite-prisma';
+import { MintingAdapterError } from '@/adapters/ordinals/minting-adapter';
 import {
   MockChainTransactionStore,
   MockMintingAdapter,
 } from '@/adapters/ordinals/mock-minting.adapter';
 import { OneSatMintingAdapter } from '@/adapters/ordinals/onesat-minting.adapter';
+import { HandCashWalletAdapter } from '@/adapters/wallets/handcash.adapter';
 import { MockWalletAdapter } from '@/adapters/wallets/mock.adapter';
+import { YoursWalletAdapter } from '@/adapters/wallets/yours.adapter';
 import { WalletAuthService } from '@/lib/auth/auth-service';
 import {
   CommunityService,
@@ -100,6 +113,9 @@ describe('Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independ
       signature: sig.signature,
       ...(sig.keyID ? { keyID: sig.keyID } : {}),
       ...(conn.payoutScript ? { payoutScript: conn.payoutScript } : {}),
+      ...(conn.destinationProof
+        ? { destinationProof: conn.destinationProof }
+        : {}),
       network: 'main',
       expectedDomain: appDomain,
     });
@@ -629,5 +645,373 @@ describe('Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independ
         network: 'main',
       })
     ).rejects.toThrow(/disabled while APP_MODE is "mock"/i);
+  });
+
+  function createSimulatedBrc100Substrate(params: {
+    seedLabel: string;
+    version: string;
+    network?: 'mainnet' | 'testnet';
+    onCreateAction?: WalletInterface['createAction'];
+    onSignAction?: WalletInterface['signAction'];
+  }): WalletInterface {
+    const hashBytes = Utils.toArray(params.seedLabel, 'utf8');
+    const padded = new Array<number>(32).fill(0);
+    for (let i = 0; i < 32; i++) {
+      padded[i] = (hashBytes[i % hashBytes.length] ?? 1) ^ ((i + 1) * 31);
+    }
+    const proto = new ProtoWallet(new PrivateKey(padded));
+
+    return {
+      async isAuthenticated() {
+        return { authenticated: true };
+      },
+      async waitForAuthentication() {
+        return { authenticated: true };
+      },
+      async getNetwork() {
+        return { network: params.network ?? 'testnet' };
+      },
+      async getVersion() {
+        return { version: params.version };
+      },
+      async getPublicKey(args: Parameters<ProtoWallet['getPublicKey']>[0]) {
+        return proto.getPublicKey(args);
+      },
+      async createSignature(
+        args: Parameters<ProtoWallet['createSignature']>[0]
+      ) {
+        return proto.createSignature(args);
+      },
+      ...(params.onCreateAction ? { createAction: params.onCreateAction } : {}),
+      ...(params.onSignAction ? { signAction: params.onSignAction } : {}),
+    } as unknown as WalletInterface;
+  }
+
+  function buildSourceDummyTx(): Transaction {
+    const srcTx = new Transaction();
+    srcTx.addOutput({
+      satoshis: 50_000,
+      lockingScript: LockingScript.fromHex(
+        '76a914111111111111111111111111111111111111111188ac'
+      ),
+    });
+    return srcTx;
+  }
+
+  it('12. Executes Yours window.CWI 1Sat Ordinal mint flow, extracts real non-zero vout=2 & script, and passes server verification', async () => {
+    const testEnv = {
+      APP_MODE: 'live',
+      NEXT_PUBLIC_APP_MODE: 'live',
+      BSV_NETWORK: 'test',
+      DATABASE_URL: 'postgresql://user:pass@db.example.com:5432/postgres',
+      SESSION_SECRET: testSessionSecret,
+      OWNERSHIP_CONFIRMATIONS_REQUIRED: '1',
+    };
+
+    const yoursWallet = createSimulatedBrc100Substrate({
+      seedLabel: 'yours-live-mint-test',
+      version: 'yours-3.0.0',
+      network: 'testnet',
+    });
+
+    const sourceTx = buildSourceDummyTx();
+    const changeScript = LockingScript.fromHex(
+      '76a914222222222222222222222222222222222222222288ac'
+    );
+    const opReturnScript = LockingScript.fromHex('006a0474657374');
+
+    let capturedDestinationScript = '';
+    let builtTx: Transaction | null = null;
+
+    const yoursAdapter = new YoursWalletAdapter({
+      brc100Wallet: yoursWallet,
+      appMode: 'live',
+      expectedNetwork: 'test',
+      allowSimulatedLiveMint: true,
+      customInscribeAction: async (_ctx, input) => {
+        capturedDestinationScript = String(input.destination?.lockingScript ?? '');
+        const inscriptionScript = buildInscriptionScript(
+          LockingScript.fromHex(capturedDestinationScript),
+          Buffer.from(input.base64Content, 'base64'),
+          input.contentType,
+          input.map
+        );
+
+        const tx = new Transaction();
+        tx.addInput({
+          sourceTransaction: sourceTx,
+          sourceOutputIndex: 0,
+          unlockingScript: LockingScript.fromHex('51'),
+        });
+        // vout 0: OP_RETURN protocol notice
+        tx.addOutput({ satoshis: 0, lockingScript: opReturnScript });
+        // vout 1: Funding change
+        tx.addOutput({ satoshis: 9_850, lockingScript: changeScript });
+        // vout 2: Actual 1-satoshi Community NFT inscription output
+        tx.addOutput({ satoshis: 1, lockingScript: inscriptionScript });
+
+        const beef = new Beef();
+        beef.mergeTransaction(tx);
+        const atomicBeef = beef.toBinaryAtomic(tx.id('hex'));
+        builtTx = tx;
+
+        return {
+          txid: tx.id('hex'),
+          tx: atomicBeef,
+        };
+      },
+    });
+
+    const conn = await yoursAdapter.connect();
+    const destProof = await yoursAdapter.deriveDestination();
+
+    // Authenticate creator on testnet service and link derived destination
+    const challenge = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const sig = await yoursAdapter.signChallenge(challenge.challengeText);
+    const testAuthService = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+      envSource: testEnv,
+    });
+    const aliceTestAuth = await testAuthService.verifyChallengeAndAuthenticate({
+      challengeId: challenge.id,
+      provider: 'yours',
+      publicKey: sig.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig.signature,
+      ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      payoutScript: destProof.lockingScript,
+      destinationProof: destProof,
+      expectedDomain: appDomain,
+    });
+
+    const testCommunityService = new CommunityService({
+      prisma,
+      envSource: testEnv,
+    });
+    const community = await testCommunityService.createCommunity({
+      authenticatedUserId: aliceTestAuth.user.id,
+      input: {
+        name: 'Yours Live Mint Guild',
+        slug: 'yours-live-mint-guild',
+        description: 'Testing live BRC-100 Yours window.CWI ordinal minting.',
+      },
+    });
+
+    const testMintService = new MintVerificationService({
+      prisma,
+      lookupProvider: chainStore,
+      envSource: testEnv,
+    });
+    const intent = await testMintService.prepareMintIntent({
+      communitySlugOrId: community.slug,
+      authenticatedUserId: aliceTestAuth.user.id,
+    });
+
+    const mintResult = await yoursAdapter.mintOrdinal({
+      contentBase64: intent.serializedMetadata.contentBase64,
+      contentType: intent.serializedMetadata.contentType,
+      metadata: intent.serializedMetadata.metadata,
+      destinationScript: destProof.lockingScript,
+    });
+
+    expect(mintResult.isMock).toBe(false);
+    expect(mintResult.vout).toBe(2);
+    expect(mintResult.origin).toBe(`${mintResult.txid}_2`);
+    expect(capturedDestinationScript).toBe(destProof.lockingScript);
+
+    const parsedScript = parseOrdinalOutputScript(mintResult.lockingScript);
+    expect(parsedScript.hasOrdEnvelope).toBe(true);
+    expect(parsedScript.spendingScriptHex).toBe(destProof.lockingScript);
+
+    // Register mined outputs in lookup store and run independent server verification
+    expect(builtTx).not.toBeNull();
+    chainStore.registerTransaction({
+      txid: mintResult.txid,
+      network: 'test',
+      outputs: builtTx!.outputs.map((out, index) => ({
+        vout: index,
+        satoshis: out.satoshis ?? 0,
+        lockingScriptHex: out.lockingScript.toHex().toLowerCase(),
+      })),
+      blockHeight: 1_900_123,
+      confirmations: 1,
+      isMock: false,
+    });
+
+    const verificationOutcome =
+      await testMintService.verifySubmittedMintTransaction({
+        communitySlugOrId: community.slug,
+        authenticatedUserId: aliceTestAuth.user.id,
+        txid: mintResult.txid,
+        vout: mintResult.vout,
+        expectedOrigin: mintResult.origin,
+      });
+
+    expect(verificationOutcome.verified).toBe(true);
+    expect(verificationOutcome.activated).toBe(true);
+    expect(verificationOutcome.community.status).toBe('ACTIVE');
+    expect(verificationOutcome.community.currentOwnerScript).toBe(
+      destProof.lockingScript
+    );
+    expect(verificationOutcome.nft.origin).toBe(`${mintResult.txid}_2`);
+    expect(verificationOutcome.nft.originVout).toBe(2);
+  });
+
+  it('13. Executes HandCash BRC-100 createAction + signAction mint flow and extracts non-zero vout=1', async () => {
+    const sourceTx = buildSourceDummyTx();
+    const changeScript = LockingScript.fromHex(
+      '76a914333333333333333333333333333333333333333388ac'
+    );
+
+    let createActionCalled = false;
+    let signActionCalled = false;
+    let stagedOutputHex = '';
+
+    const hcWallet = createSimulatedBrc100Substrate({
+      seedLabel: 'handcash-live-mint-test',
+      version: 'handcash-1.5.0',
+      network: 'testnet',
+      onCreateAction: async (args) => {
+        createActionCalled = true;
+        expect(args.outputs?.[0]?.satoshis).toBe(1);
+        expect(args.outputs?.[0]?.basket).toBe('1sat');
+        stagedOutputHex = args.outputs?.[0]?.lockingScript ?? '';
+        return {
+          signableTransaction: {
+            reference: 'hc-sign-ref-vout1',
+            tx: [],
+          },
+        };
+      },
+      onSignAction: async (args) => {
+        signActionCalled = true;
+        expect(args.reference).toBe('hc-sign-ref-vout1');
+
+        const tx = new Transaction();
+        tx.addInput({
+          sourceTransaction: sourceTx,
+          sourceOutputIndex: 0,
+          unlockingScript: LockingScript.fromHex('51'),
+        });
+        // vout 0: HandCash fee/change output
+        tx.addOutput({ satoshis: 4_200, lockingScript: changeScript });
+        // vout 1: Exact 1-satoshi Community NFT inscription output
+        tx.addOutput({
+          satoshis: 1,
+          lockingScript: LockingScript.fromHex(stagedOutputHex),
+        });
+
+        const beef = new Beef();
+        beef.mergeTransaction(tx);
+        return {
+          txid: tx.id('hex'),
+          tx: beef.toBinaryAtomic(tx.id('hex')),
+        };
+      },
+    });
+
+    const handcashAdapter = new HandCashWalletAdapter({
+      brc100Wallet: hcWallet,
+      appMode: 'live',
+      allowSimulatedLiveMint: true,
+    });
+
+    await handcashAdapter.connect();
+    const destProof = await handcashAdapter.deriveDestination();
+
+    const metadata = buildCommunityNftMetadata({
+      communityId: 'comm-hc-100',
+      name: 'HandCash BRC Creators',
+      description: 'HandCash createAction/signAction 1Sat Ordinal test.',
+    });
+    const serialized = serializeCommunityNftMetadataDeterministically({
+      communityId: metadata.communityId,
+      name: metadata.name,
+      description: metadata.description ?? '',
+      artworkUrl: metadata.artworkUrl ?? null,
+    });
+
+    const mintResult = await handcashAdapter.mintOrdinal({
+      contentBase64: serialized.contentBase64,
+      contentType: serialized.contentType,
+      metadata: serialized.metadata,
+      destinationScript: destProof.lockingScript,
+    });
+
+    expect(createActionCalled).toBe(true);
+    expect(signActionCalled).toBe(true);
+    expect(mintResult.isMock).toBe(false);
+    expect(mintResult.vout).toBe(1);
+    expect(mintResult.origin).toBe(`${mintResult.txid}_1`);
+
+    const parsed = parseOrdinalOutputScript(mintResult.lockingScript);
+    expect(parsed.hasOrdEnvelope).toBe(true);
+    expect(parsed.spendingScriptHex).toBe(destProof.lockingScript);
+  });
+
+  it('14. Rejects live mint output extraction (MINT_TX_OUTPUT_UNVERIFIABLE) if signed tx lacks a matching 1-satoshi Community NFT output', async () => {
+    const sourceTx = buildSourceDummyTx();
+    const decoyWallet = createSimulatedBrc100Substrate({
+      seedLabel: 'handcash-missing-ordinal-out',
+      version: 'handcash-1.5.0',
+      network: 'testnet',
+      onCreateAction: async () => {
+        const tx = new Transaction();
+        tx.addInput({
+          sourceTransaction: sourceTx,
+          sourceOutputIndex: 0,
+          unlockingScript: LockingScript.fromHex('51'),
+        });
+        // Missing 1-satoshi inscription output: only plain 500-sat P2PKH output
+        tx.addOutput({
+          satoshis: 500,
+          lockingScript: LockingScript.fromHex(
+            '76a914444444444444444444444444444444444444444488ac'
+          ),
+        });
+        const beef = new Beef();
+        beef.mergeTransaction(tx);
+        return {
+          txid: tx.id('hex'),
+          tx: beef.toBinaryAtomic(tx.id('hex')),
+        };
+      },
+    });
+
+    const handcashAdapter = new HandCashWalletAdapter({
+      brc100Wallet: decoyWallet,
+      appMode: 'live',
+      allowSimulatedLiveMint: true,
+    });
+    await handcashAdapter.connect();
+    const destProof = await handcashAdapter.deriveDestination();
+
+    const metadata = buildCommunityNftMetadata({
+      communityId: 'comm-hc-missing-out',
+      name: 'Invalid Mint Output Community',
+      description: 'Should fail output verification.',
+    });
+    const serialized = serializeCommunityNftMetadataDeterministically({
+      communityId: metadata.communityId,
+      name: metadata.name,
+      description: metadata.description ?? '',
+      artworkUrl: null,
+    });
+
+    await expect(
+      handcashAdapter.mintOrdinal({
+        contentBase64: serialized.contentBase64,
+        contentType: serialized.contentType,
+        metadata: serialized.metadata,
+        destinationScript: destProof.lockingScript,
+      })
+    ).rejects.toMatchObject({
+      name: 'MintingAdapterError',
+      code: 'MINT_TX_OUTPUT_UNVERIFIABLE',
+    });
   });
 });

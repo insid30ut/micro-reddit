@@ -1,9 +1,12 @@
+import type { WalletInterface } from '@bsv/sdk';
 import type {
   MintOrdinalInput,
   MintResult,
   PaymentOutput,
   SignatureResult,
   TransactionResult,
+  VerifiedWalletDestination,
+  WalletCapabilities,
   WalletConnectionResult,
   WalletErrorCode,
   WalletIdentity,
@@ -11,7 +14,8 @@ import type {
 } from '@/types/wallet';
 
 /**
- * Normalized WalletAdapter interface required by POC_BLUEPRINT.md Section 5.3.
+ * Normalized WalletAdapter interface required by POC_BLUEPRINT.md Section 5.3
+ * and the shared BRC-100 wallet completion specification.
  */
 export interface WalletAdapter {
   readonly provider: WalletProviderType;
@@ -23,6 +27,12 @@ export interface WalletAdapter {
   disconnect(): Promise<void>;
 
   getIdentity(): Promise<WalletIdentity>;
+
+  getCapabilities(): WalletCapabilities;
+
+  getWalletInterface(): WalletInterface | null;
+
+  deriveDestination(options?: { keyID?: string }): Promise<VerifiedWalletDestination>;
 
   signChallenge(challenge: string): Promise<SignatureResult>;
 

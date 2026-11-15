@@ -6,7 +6,9 @@ import {
 } from '@/lib/auth/auth-service';
 import {
   applySessionCookie,
+  DestinationProofSchema,
   getSessionTokenFromRequest,
+  normalizeDestinationProofInput,
   resolveRequestDomain,
 } from '@/lib/auth/http-helpers';
 
@@ -19,6 +21,7 @@ const ConnectWalletSchema = z.object({
   keyID: z.string().min(1).optional(),
   signatureScheme: z.enum(['brc100', 'ecdsa-sha256', 'bsm']).optional(),
   payoutScript: z.string().optional(),
+  destinationProof: DestinationProofSchema.optional(),
   network: z.enum(['main', 'test']).optional(),
   displayName: z.string().max(64).optional(),
 });
@@ -53,6 +56,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? { signatureScheme: parsed.data.signatureScheme }
         : {}),
       ...(parsed.data.payoutScript ? { payoutScript: parsed.data.payoutScript } : {}),
+      ...(parsed.data.destinationProof
+        ? { destinationProof: normalizeDestinationProofInput(parsed.data.destinationProof) }
+        : {}),
       ...(parsed.data.network ? { network: parsed.data.network } : {}),
       ...(parsed.data.displayName ? { displayName: parsed.data.displayName } : {}),
       expectedDomain,

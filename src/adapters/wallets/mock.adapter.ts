@@ -1,5 +1,6 @@
-import { PrivateKey, ProtoWallet } from '@bsv/sdk';
+import { PrivateKey, ProtoWallet, Utils, type WalletInterface } from '@bsv/sdk';
 import { MockMintingAdapter } from '@/adapters/ordinals/mock-minting.adapter';
+import { deriveAndSignBrc100Destination } from '@/adapters/wallets/brc100-shared';
 import {
   UnsupportedWalletOperationError,
   type WalletAdapter,
@@ -8,7 +9,6 @@ import {
 import {
   AUTH_BRC100_PROTOCOL_ID,
   DEFAULT_AUTH_KEY_ID,
-  deriveP2PKHScriptFromPublicKey,
   extractNonceFromChallenge,
 } from '@/lib/auth/crypto-verify';
 import type {
@@ -17,6 +17,8 @@ import type {
   PaymentOutput,
   SignatureResult,
   TransactionResult,
+  VerifiedWalletDestination,
+  WalletCapabilities,
   WalletConnectionResult,
   WalletIdentity,
 } from '@/types/wallet';
@@ -80,6 +82,20 @@ export class MockWalletAdapter implements WalletAdapter {
     this.shouldRejectSign = options.shouldRejectSign ?? false;
   }
 
+  public getWalletInterface(): WalletInterface | null {
+    return null;
+  }
+
+  public getCapabilities(): WalletCapabilities {
+    return {
+      canAuthenticate: true,
+      canMintOrdinal: true,
+      canSendOutputs: false,
+      supportsBrc100: false,
+      connectionTransport: 'mock',
+    };
+  }
+
   public async isAvailable(): Promise<boolean> {
     return true;
   }
@@ -97,15 +113,17 @@ export class MockWalletAdapter implements WalletAdapter {
       identityKey: true,
     });
     const normalizedPubKey = publicKey.toLowerCase();
-    const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedPubKey);
-
     this.connected = true;
+
+    const destinationProof = await this.deriveDestination();
 
     return {
       provider: 'mock',
       identityKey: normalizedPubKey,
       publicKey: normalizedPubKey,
-      payoutScript,
+      payoutScript: destinationProof.lockingScript,
+      destinationProof,
+      capabilities: this.getCapabilities(),
       network: this.network,
       displayName: this.persona.displayName,
       version: `mock-1.0.0-${this.persona.id}`,
@@ -122,15 +140,34 @@ export class MockWalletAdapter implements WalletAdapter {
       identityKey: true,
     });
     const normalizedPubKey = publicKey.toLowerCase();
+    const destinationProof = await this.deriveDestination();
     return {
       provider: 'mock',
       identityKey: normalizedPubKey,
       publicKey: normalizedPubKey,
-      payoutScript: deriveP2PKHScriptFromPublicKey(normalizedPubKey),
+      payoutScript: destinationProof.lockingScript,
+      destinationProof,
+      capabilities: this.getCapabilities(),
       network: this.network,
       displayName: this.persona.displayName,
       version: `mock-1.0.0-${this.persona.id}`,
     };
+  }
+
+  public async deriveDestination(options?: {
+    keyID?: string;
+  }): Promise<VerifiedWalletDestination> {
+    this.ensureConnected();
+    const { publicKey } = await this.protoWallet.getPublicKey({
+      identityKey: true,
+    });
+    return deriveAndSignBrc100Destination({
+      wallet: this.protoWallet,
+      provider: 'mock',
+      identityKey: publicKey.toLowerCase(),
+      network: this.network,
+      ...(options?.keyID ? { keyID: options.keyID } : {}),
+    });
   }
 
   public async signChallenge(challenge: string): Promise<SignatureResult> {
@@ -154,7 +191,7 @@ export class MockWalletAdapter implements WalletAdapter {
       identityKey: true,
     });
     const keyID = extractNonceFromChallenge(challenge) ?? DEFAULT_AUTH_KEY_ID;
-    const messageBytes = Array.from(Buffer.from(challenge, 'utf8'));
+    const messageBytes = Utils.toArray(challenge, 'utf8');
 
     const { signature } = await this.protoWallet.createSignature({
       data: messageBytes,
@@ -164,7 +201,7 @@ export class MockWalletAdapter implements WalletAdapter {
     });
 
     return {
-      signature: Buffer.from(signature).toString('hex').toLowerCase(),
+      signature: Utils.toHex(Array.from(signature)).toLowerCase(),
       publicKey: publicKey.toLowerCase(),
       challenge,
       keyID,
@@ -187,7 +224,7 @@ export class MockWalletAdapter implements WalletAdapter {
     const destinationP2PKHScript =
       input.destinationScript ??
       identity.payoutScript ??
-      deriveP2PKHScriptFromPublicKey(identity.publicKey);
+      (await this.deriveDestination()).lockingScript;
 
     const mockMinter = new MockMintingAdapter();
     const minted = await mockMinter.mintCommunityOrdinal({

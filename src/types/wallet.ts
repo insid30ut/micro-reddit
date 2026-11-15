@@ -6,6 +6,8 @@ export type WalletConnectionState =
   | 'disconnected'
   | 'connecting'
   | 'connected'
+  | 'reconnecting'
+  | 'reauth_required'
   | 'authenticating'
   | 'authenticated'
   | 'error';
@@ -17,7 +19,31 @@ export type WalletErrorCode =
   | 'PROVIDER_MISMATCH'
   | 'NETWORK_ERROR'
   | 'UNSUPPORTED_OPERATION'
-  | 'AUTHENTICATION_FAILED';
+  | 'AUTHENTICATION_FAILED'
+  | 'INVALID_DESTINATION_PROOF'
+  | 'MINT_FAILED';
+
+export interface WalletCapabilities {
+  canAuthenticate: boolean;
+  canMintOrdinal: boolean;
+  canSendOutputs: boolean;
+  supportsBrc100: boolean;
+  connectionTransport: 'brc100-cwi' | 'brc100-http' | 'legacy-yours' | 'mock' | 'none';
+}
+
+export interface WalletDestinationProof {
+  publicKey: string;
+  lockingScript: string;
+  address?: string;
+  signature: string;
+  signatureScheme: SignatureScheme;
+  proofMessage: string;
+  protocolID?: [0 | 1 | 2, string];
+  keyID?: string;
+  counterparty?: 'self' | 'anyone' | string;
+}
+
+export type VerifiedWalletDestination = WalletDestinationProof;
 
 export interface WalletIdentity {
   provider: WalletProviderType;
@@ -27,6 +53,9 @@ export interface WalletIdentity {
   publicKey: string;
   /** Standard 25-byte P2PKH locking script in lowercase hex (76a914<20-byte-pkh>88ac) */
   payoutScript?: string;
+  /** Cryptographic ownership proof corresponding to payoutScript */
+  destinationProof?: WalletDestinationProof;
+  capabilities?: WalletCapabilities;
   network: 'main' | 'test';
   /** Optional human-readable handle or label if exposed by the wallet */
   displayName?: string;
@@ -39,6 +68,8 @@ export interface WalletConnectionResult {
   identityKey: string;
   publicKey: string;
   payoutScript?: string;
+  destinationProof?: WalletDestinationProof;
+  capabilities?: WalletCapabilities;
   network: 'main' | 'test';
   displayName?: string;
   version?: string;
@@ -102,6 +133,8 @@ export interface WalletProviderDiscovery {
   provider: WalletProviderType;
   displayName: string;
   available: boolean;
-  transport: 'brc100-cwi' | 'yours-extension' | 'brc100-json-api' | 'mock';
+  transport: 'brc100-cwi' | 'brc100-http' | 'yours-extension' | 'brc100-json-api' | 'mock' | 'none';
+  version?: string;
+  capabilities?: WalletCapabilities;
   details: string;
 }

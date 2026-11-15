@@ -8,6 +8,12 @@ const nextConfig: NextConfig = {
     '@1sat/actions',
     '@1sat/client',
   ],
+  turbopack: {
+    resolveAlias: {
+      fs: { browser: './src/lib/stubs/empty-module.ts' },
+      path: { browser: './src/lib/stubs/empty-module.ts' },
+    },
+  },
 };
 
 export default nextConfig;

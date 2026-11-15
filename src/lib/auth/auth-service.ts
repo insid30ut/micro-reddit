@@ -6,7 +6,11 @@ import {
   type User as PrismaUser,
   type WalletConnection as PrismaWalletConnection,
 } from '@/generated/prisma/client';
-import type { SignatureScheme, WalletProviderType } from '@/types/wallet';
+import type {
+  SignatureScheme,
+  WalletDestinationProof,
+  WalletProviderType,
+} from '@/types/wallet';
 import { prisma } from '@/lib/database/prisma';
 import {
   AuthChallengeError,
@@ -15,6 +19,7 @@ import {
 } from '@/lib/auth/challenge-service';
 import {
   isValidCompressedPublicKey,
+  verifyDestinationOwnershipProof,
   verifyWalletChallengeSignature,
 } from '@/lib/auth/crypto-verify';
 import { isStandardP2PKHScript } from '@/lib/ordinals/script-parser';
@@ -34,6 +39,7 @@ export type WalletAuthErrorCode =
   | 'NETWORK_MISMATCH'
   | 'INVALID_PUBLIC_KEY'
   | 'INVALID_PAYOUT_SCRIPT'
+  | 'INVALID_DESTINATION_PROOF'
   | 'INVALID_SIGNATURE'
   | 'UNAUTHORIZED_WALLET_LINK'
   | 'WALLET_NOT_FOUND'
@@ -91,8 +97,10 @@ export interface VerifyAuthInput {
   keyID?: string;
   signatureScheme?: SignatureScheme;
   expectedDomain: string;
-  /** Optional explicit P2PKH payout script reported by a wallet's payment key (never derived from identityKey on server). */
+  /** Optional explicit P2PKH payout script reported by a wallet's derived payment key (requires destinationProof). */
   payoutScript?: string | null;
+  /** Cryptographic ownership proof verifying wallet control of payoutScript. */
+  destinationProof?: WalletDestinationProof | null;
   /** Client-reported network; must match the server's configured BSV_NETWORK when supplied. */
   network?: 'main' | 'test';
   displayName?: string;
@@ -407,8 +415,8 @@ export class WalletAuthService {
       );
     }
 
-    // 2c. Never silently derive a payout destination from `identityKey` on the server.
-    // Only record `currentPayoutScript` when an explicit, validated P2PKH payment script is provided.
+    // 2c. Never silently derive a payout destination from `identityKey` on the server,
+    // and never accept a client-supplied `payoutScript` without cryptographic ownership proof.
     let validatedPayoutScript: string | null = null;
     if (
       input.payoutScript !== undefined &&
@@ -423,6 +431,34 @@ export class WalletAuthService {
           400
         );
       }
+
+      const proofResult = await verifyDestinationOwnershipProof({
+        provider: input.provider,
+        identityKey: normalizedIdentityKey,
+        payoutScript: normalizedScript,
+        destinationProof: input.destinationProof,
+      });
+      if (!proofResult.valid) {
+        await this.recordAudit(
+          'AUTH_FAILED',
+          activeSession?.userId ?? null,
+          'AuthChallenge',
+          challenge.id,
+          {
+            reason: 'INVALID_DESTINATION_PROOF',
+            message: proofResult.reason ?? 'Destination ownership proof verification failed.',
+            provider: input.provider,
+          },
+          now
+        );
+        throw new WalletAuthError(
+          'INVALID_DESTINATION_PROOF',
+          proofResult.reason ??
+            'Cryptographic destination ownership proof is required when supplying a payoutScript.',
+          400
+        );
+      }
+
       validatedPayoutScript = normalizedScript;
     }
 
@@ -812,6 +848,84 @@ export class WalletAuthService {
       remainingConnectedWallets,
       sessionRevoked,
     };
+  }
+
+  /**
+   * Cryptographically verifies and persists an explicit derived destination P2PKH script
+   * (`currentPayoutScript`) onto an authenticated user's wallet connection.
+   */
+  public async updateVerifiedWalletDestination(params: {
+    sessionToken: string | undefined | null;
+    provider?: WalletProviderType;
+    destinationProof: WalletDestinationProof;
+    now?: Date;
+  }): Promise<WalletConnectionRecord> {
+    const now = params.now ?? new Date();
+    const context = await this.getSessionContext(params.sessionToken, now);
+
+    const targetWallet =
+      (params.provider
+        ? context.wallets.find((w) => w.provider === params.provider && w.connected)
+        : context.activeWallet) ??
+      context.activeWallet;
+
+    if (!targetWallet || targetWallet.userId !== context.user.id) {
+      throw new WalletAuthError(
+        'WALLET_NOT_FOUND',
+        'No connected wallet matching the selected provider was found for this session.',
+        404
+      );
+    }
+
+    const proofCheck = await verifyDestinationOwnershipProof({
+      provider: targetWallet.provider,
+      identityKey: targetWallet.identityKey,
+      payoutScript: params.destinationProof.lockingScript,
+      destinationProof: params.destinationProof,
+    });
+
+    if (!proofCheck.valid || !proofCheck.derivedScript) {
+      await this.recordAudit(
+        'WALLET_DESTINATION_REJECTED',
+        context.user.id,
+        'WalletConnection',
+        targetWallet.id,
+        {
+          provider: targetWallet.provider,
+          reason: proofCheck.reason ?? 'Invalid destination ownership proof.',
+        },
+        now
+      );
+      throw new WalletAuthError(
+        'INVALID_DESTINATION_PROOF',
+        proofCheck.reason ?? 'Cryptographic destination ownership proof verification failed.',
+        400
+      );
+    }
+
+    const updated = await this.prisma.walletConnection.update({
+      where: { id: targetWallet.id },
+      data: {
+        currentPayoutScript: proofCheck.derivedScript,
+      },
+    });
+
+    await this.recordAudit(
+      'WALLET_DESTINATION_VERIFIED',
+      context.user.id,
+      'WalletConnection',
+      updated.id,
+      {
+        provider: updated.provider,
+        payoutScript: proofCheck.derivedScript,
+        destinationPublicKey: params.destinationProof.publicKey.trim().toLowerCase(),
+        keyID: params.destinationProof.keyID ?? null,
+        signatureScheme: params.destinationProof.signatureScheme,
+      },
+      now
+    );
+
+    return mapWalletRow(updated);
   }
 
   /**
