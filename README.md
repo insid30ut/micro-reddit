@@ -16,8 +16,8 @@ A proof-of-concept application demonstrating that a community can be represented
 1. Copy `.env.example` to `.env` (already pre-populated with public Supabase API settings `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` for `community-nft-poc`, ref `snzitranohtepyzgzmxy`).
 2. To connect the Prisma runtime directly to Supabase over Postgres (outside `mock` / `PGlite` test mode), replace `[YOUR-PASSWORD]` in the documented `DATABASE_URL` and `DIRECT_URL` templates in `.env`:
    ```env
-   DATABASE_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
-   DIRECT_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+   DATABASE_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-URL-ENCODED-PASSWORD]@aws-1-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+   DIRECT_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-URL-ENCODED-PASSWORD]@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
    ```
 3. Install dependencies:
    ```bash
