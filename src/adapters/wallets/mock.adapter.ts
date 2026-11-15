@@ -77,7 +77,7 @@ export class MockWalletAdapter implements WalletAdapter {
     this.persona = MOCK_PERSONAS[personaId];
     this.privateKey = PrivateKey.fromHex(this.persona.seedHex);
     this.protoWallet = new ProtoWallet(this.privateKey);
-    this.network = options.network ?? 'main';
+    this.network = options.network ?? 'test';
     this.shouldRejectConnect = options.shouldRejectConnect ?? false;
     this.shouldRejectSign = options.shouldRejectSign ?? false;
   }

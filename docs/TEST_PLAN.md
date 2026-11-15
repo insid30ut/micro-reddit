@@ -47,7 +47,7 @@
 Automated tests use simulated `@bsv/sdk` `ProtoWallet` and mock HTTP substrates. Before enabling production/mainnet, verify real wallets manually on `BSV_NETWORK="test"`:
 
 ### A. Preflight Setup (`BSV_NETWORK="test"`)
-1. Configure `.env` with valid `DATABASE_URL`, `DIRECT_URL`, 32+ char `SESSION_SECRET`, `BSV_NETWORK="test"`, `OWNERSHIP_CONFIRMATIONS_REQUIRED="1"`, and keep `ALLOW_MAINNET_MINT` unset/`false`.
+1. Configure `.env` with valid `DATABASE_URL`, `DIRECT_URL`, 32+ char `SESSION_SECRET`, `BSV_NETWORK="test"`, `OWNERSHIP_CONFIRMATIONS_REQUIRED="1"`, and keep `ALLOW_MAINNET_BROADCAST="false"` (never enable on mainnet unless explicitly authorized).
 2. For authentication & UI testing in safe mode: `APP_MODE="mock"`. For live testnet wallet minting: temporarily set `APP_MODE="live"` and `NEXT_PUBLIC_APP_MODE="live"` (`BSV_NETWORK="test"`).
 3. Run `npm run dev` and open `http://localhost:3000`.
 

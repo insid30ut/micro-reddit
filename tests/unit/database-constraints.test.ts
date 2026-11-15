@@ -237,4 +237,121 @@ describe('PostgreSQL Migration & Database Schema Constraints', () => {
       )
     ).rejects.toThrow();
   });
+
+  it('constructs all 13 Prisma tables, columns, indexes, RLS protections, and blocks non-P2PKH payout routing at the DB level', async () => {
+    const tablesRes = await db.query<{ tablename: string; rowsecurity: boolean }>(
+      `SELECT c.relname AS tablename, c.relrowsecurity AS rowsecurity
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relkind = 'r'
+       ORDER BY c.relname ASC;`
+    );
+
+    const expectedTables = [
+      'audit_events',
+      'auth_challenges',
+      'auth_sessions',
+      'communities',
+      'community_nfts',
+      'ownership_events',
+      'paid_activities',
+      'payment_allocations',
+      'payment_intents',
+      'payments',
+      'revenue_policies',
+      'users',
+      'wallet_connections',
+    ];
+
+    expect(tablesRes.rows.map((r) => r.tablename)).toEqual(expectedTables);
+    for (const row of tablesRes.rows) {
+      expect(row.rowsecurity).toBe(true);
+    }
+
+    // Verify WalletConnection migration columns exist with safe defaults
+    const wcColsRes = await db.query<{ column_name: string; column_default: string | null }>(
+      `SELECT column_name, column_default
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'wallet_connections'
+         AND column_name IN ('network', 'connected', 'updatedAt')
+       ORDER BY column_name ASC;`
+    );
+    expect(wcColsRes.rows.map((r) => r.column_name)).toEqual([
+      'connected',
+      'network',
+      'updatedAt',
+    ]);
+    expect(wcColsRes.rows.find((r) => r.column_name === 'network')?.column_default).toContain('test');
+    expect(wcColsRes.rows.find((r) => r.column_name === 'connected')?.column_default).toBe('true');
+
+    // Verify AuditEvent.actorUserId column & index exist
+    const auditColRes = await db.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'audit_events' AND column_name = 'actorUserId';`
+    );
+    expect(auditColRes.rows).toHaveLength(1);
+
+    const auditIdxRes = await db.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+       WHERE schemaname = 'public' AND tablename = 'audit_events' AND indexname = 'audit_events_actorUserId_idx';`
+    );
+    expect(auditIdxRes.rows).toHaveLength(1);
+
+    // Reject marking an UNVERIFIED, ORDLOCK, NON_STANDARD, or EMPTY CommunityNFT as payout-routable
+    await db.query(
+      `INSERT INTO "communities" (
+         "id", "name", "slug", "description", "status",
+         "originalCreatorId", "updatedAt"
+       ) VALUES (
+         'comm_unroutable_check', 'Unroutable NFT Community', 'unroutable-nft-community',
+         'Constraint test community', 'PENDING_MINT', 'user_alice', NOW()
+       );`
+    );
+
+    for (const [idx, badScriptType] of [
+      'UNVERIFIED',
+      'ORDLOCK',
+      'NON_STANDARD',
+      'EMPTY',
+    ].entries()) {
+      const badTxid = `${idx + 1}`.repeat(64);
+      await expect(
+        db.query(
+          `INSERT INTO "community_nfts" (
+             "id", "communityId", "protocol", "originTxid", "originVout", "origin",
+             "currentTxid", "currentVout", "currentOwnerScript", "scriptType", "isPayoutRoutable", "updatedAt"
+           ) VALUES (
+             $1, 'comm_unroutable_check', '1sat', $2, 0, $3, $2, 0, '51', $4, true, NOW()
+           );`,
+          [
+            `nft_bad_${badScriptType.toLowerCase()}`,
+            badTxid,
+            `${badTxid}_0`,
+            badScriptType,
+          ]
+        )
+      ).rejects.toThrow(/payout_routable_requires_p2pkh_check/i);
+    }
+
+    // Verified P2PKH with isPayoutRoutable = true succeeds, and cannot later be downgraded without setting isPayoutRoutable = false
+    const validTxid = 'f'.repeat(64);
+    await expect(
+      db.query(
+        `INSERT INTO "community_nfts" (
+           "id", "communityId", "protocol", "originTxid", "originVout", "origin",
+           "currentTxid", "currentVout", "currentOwnerScript", "scriptType", "isPayoutRoutable", "updatedAt"
+         ) VALUES (
+           'nft_valid_p2pkh', 'comm_unroutable_check', '1sat',
+           $1, 0, $2, $1, 0, $3, 'P2PKH', true, NOW()
+         );`,
+        [validTxid, `${validTxid}_0`, ALICE_SCRIPT]
+      )
+    ).resolves.toBeDefined();
+
+    await expect(
+      db.query(
+        `UPDATE "community_nfts" SET "scriptType" = 'NON_STANDARD' WHERE "id" = 'nft_valid_p2pkh';`
+      )
+    ).rejects.toThrow(/payout_routable_requires_p2pkh_check/i);
+  });
 });

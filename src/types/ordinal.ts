@@ -1,4 +1,4 @@
-export type ScriptClassification = 'P2PKH' | 'ORDLOCK' | 'NON_STANDARD' | 'EMPTY';
+export type ScriptClassification = 'P2PKH' | 'ORDLOCK' | 'NON_STANDARD' | 'EMPTY' | 'UNVERIFIED';
 
 export interface ParsedOrdinalScript {
   /** Full original locking script in lowercase hex */

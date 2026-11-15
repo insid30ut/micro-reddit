@@ -36,6 +36,7 @@ export type WalletAuthErrorCode =
   | 'CHALLENGE_REUSED'
   | 'DOMAIN_MISMATCH'
   | 'PROVIDER_MISMATCH'
+  | 'MOCK_PROVIDER_FORBIDDEN'
   | 'NETWORK_MISMATCH'
   | 'INVALID_PUBLIC_KEY'
   | 'INVALID_PAYOUT_SCRIPT'
@@ -232,7 +233,24 @@ export class WalletAuthService {
    * Client-supplied network values are never trusted to override server configuration.
    */
   public getServerNetwork(): 'main' | 'test' {
-    return this.envSource.BSV_NETWORK === 'test' ? 'test' : 'main';
+    return this.envSource.BSV_NETWORK === 'main' ? 'main' : 'test';
+  }
+
+  /**
+   * Returns true when `APP_MODE="live"` is active in the service's environment configuration.
+   */
+  public isLiveMode(): boolean {
+    return this.envSource.APP_MODE === 'live';
+  }
+
+  private assertProviderAllowedInCurrentMode(provider: WalletProviderType): void {
+    if (provider === 'mock' && this.isLiveMode()) {
+      throw new WalletAuthError(
+        'MOCK_PROVIDER_FORBIDDEN',
+        'Mock wallet provider is disabled when APP_MODE="live". Connect with Yours Wallet or HandCash.',
+        403
+      );
+    }
   }
 
   private async recordAudit(
@@ -268,6 +286,22 @@ export class WalletAuthService {
     ttlMs?: number;
     now?: Date;
   }): Promise<AuthChallengeRecord> {
+    if (params.provider === 'mock' && this.isLiveMode()) {
+      await this.recordAudit(
+        'AUTH_CHALLENGE_REJECTED',
+        null,
+        'AuthChallenge',
+        params.domain,
+        {
+          reason: 'MOCK_PROVIDER_FORBIDDEN',
+          provider: params.provider,
+          domain: params.domain,
+        },
+        params.now
+      );
+      this.assertProviderAllowedInCurrentMode(params.provider);
+    }
+
     let sessionId: string | undefined;
     let userId: string | undefined;
 
@@ -318,6 +352,21 @@ export class WalletAuthService {
     input: VerifyAuthInput
   ): Promise<VerifyAuthResult> {
     const now = input.now ?? new Date();
+
+    if (input.provider === 'mock' && this.isLiveMode()) {
+      await this.recordAudit(
+        'AUTH_FAILED',
+        null,
+        'AuthChallenge',
+        input.challengeId,
+        {
+          reason: 'MOCK_PROVIDER_FORBIDDEN',
+          provider: input.provider,
+        },
+        now
+      );
+      this.assertProviderAllowedInCurrentMode(input.provider);
+    }
 
     // Check if caller has an active session (for wallet linking)
     let activeSession: ServerSessionRecord | undefined;
@@ -739,6 +788,13 @@ export class WalletAuthService {
   ): Promise<SessionContextResult> {
     try {
       const session = await this.sessionStore.verifySessionToken(sessionToken, now);
+      if (this.isLiveMode() && session.provider === 'mock') {
+        throw new WalletAuthError(
+          'MOCK_PROVIDER_FORBIDDEN',
+          'Mock wallet sessions are not permitted when APP_MODE="live".',
+          403
+        );
+      }
       const userRow = await this.prisma.user.findUnique({
         where: { id: session.userId },
       });
@@ -861,6 +917,9 @@ export class WalletAuthService {
     now?: Date;
   }): Promise<WalletConnectionRecord> {
     const now = params.now ?? new Date();
+    if (params.provider) {
+      this.assertProviderAllowedInCurrentMode(params.provider);
+    }
     const context = await this.getSessionContext(params.sessionToken, now);
 
     const targetWallet =
@@ -876,6 +935,8 @@ export class WalletAuthService {
         404
       );
     }
+
+    this.assertProviderAllowedInCurrentMode(targetWallet.provider);
 
     const proofCheck = await verifyDestinationOwnershipProof({
       provider: targetWallet.provider,

@@ -407,7 +407,7 @@ export function CommunityMintPanel({
 
               {bsvNetwork === 'main' && (
                 <p className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
-                  Mainnet minting is guarded by ALLOW_MAINNET_MINT=true. Switch
+                  Mainnet minting is guarded by ALLOW_MAINNET_BROADCAST=true. Switch
                   to BSV_NETWORK=test for live wallet testing.
                 </p>
               )}

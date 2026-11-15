@@ -49,6 +49,8 @@ export interface OneSatMintingAdapterOptions {
   /** Test-only override allowing simulated BRC-100 substrates to execute live mint flow in offline unit tests */
   allowSimulatedLiveMint?: boolean;
   /** Explicit approval gate required before constructing/broadcasting mainnet mint transactions */
+  allowMainnetBroadcast?: boolean;
+  /** Deprecated alias for allowMainnetBroadcast */
   allowMainnetMint?: boolean;
   /** Optional 1Sat Stack API base URL (defaults to ONESAT_API_BASE_URL) */
   apiBaseUrl?: string;
@@ -192,7 +194,9 @@ export class OneSatMintingAdapter implements OrdinalMintingAdapter {
       bsvNetwork: this.options.network ?? config.BSV_NETWORK,
       oneSatApiBaseUrl: this.apiBaseUrl ?? config.ONESAT_API_BASE_URL,
       allowMainnetMint:
+        this.options.allowMainnetBroadcast === true ||
         this.options.allowMainnetMint === true ||
+        config.ALLOW_MAINNET_BROADCAST === true ||
         this.envSource.ALLOW_MAINNET_MINT === 'true',
     };
   }
@@ -372,7 +376,7 @@ export class OneSatMintingAdapter implements OrdinalMintingAdapter {
     if (runtime.bsvNetwork === 'main' && !runtime.allowMainnetMint) {
       throw new MintingAdapterError(
         'MAINNET_MINT_FORBIDDEN',
-        'Mainnet 1Sat Ordinal minting is blocked unless ALLOW_MAINNET_MINT=true is explicitly authorized. Use BSV_NETWORK=test for live wallet testing.',
+        'Mainnet 1Sat Ordinal broadcasting is disabled unless APP_MODE="live", BSV_NETWORK="main", and ALLOW_MAINNET_BROADCAST="true" are all explicitly configured. Use BSV_NETWORK=test for live wallet testing.',
         403
       );
     }

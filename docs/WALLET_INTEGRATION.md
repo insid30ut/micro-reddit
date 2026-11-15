@@ -50,6 +50,21 @@ Shared BRC-100 behavior in `src/adapters/wallets/brc100-shared.ts`:
 - HandCash **Desktop BRC Wallet** runs a local BRC-100 JSON-API bridge on `https://127.0.0.1:2121` / `http://127.0.0.1:3321`, enabling full `waitForAuthentication`, `getPublicKey`, `createSignature`, `createAction`, and `signAction` support.
 - HandCash **Mobile** alone does not run a localhost BRC-100 HTTP bridge for desktop browsers and therefore cannot participate in live BRC-100 challenge signing or transaction building without HandCash Desktop or an explicit BRC-100 substrate.
 
+## 3a. Yours Wallet Connection Interfaces & Signature Verification
+
+`YoursWalletAdapter` (`src/adapters/wallets/yours.adapter.ts`) supports two explicit connection paths (with no automatic provider racing):
+
+1. **Primary — BRC-100 (`window.CWI`) Interface (`connectionTransport: 'brc100-cwi'`)**:
+   - **Discovery & Version Check**: Calls `getVersion()` and accepts `yours*`, `1sat*`, `babbage*`, or `cwi*` while rejecting `handcash*` (`PROVIDER_MISMATCH`).
+   - **Authentication & Identity**: Calls `waitForAuthentication({})` and `getPublicKey({ identityKey: true })`.
+   - **Challenge Signing (`signChallenge`)**: Calls `createSignature({ data, protocolID: [2, 'community nft auth'], keyID: <nonce>, counterparty: 'anyone' })` with `signatureScheme: 'brc100'`. Verified on the server by `ProtoWallet('anyone').verifySignature(...)`.
+   - **Destination Key Derivation**: Calls `deriveDestination()` (`protocolID: [2, 'community nft destination']`, `keyID: 'destination-0'`) and signs a canonical ownership proof so `payoutScript` is cryptographically bound to a derived payment key distinct from the root `identityKey`.
+
+2. **Authentication-Only Fallback — Injected Extension (`window.yours`, `connectionTransport: 'legacy-yours'`)**:
+   - **Identity & Public Keys**: Calls `connect()` and `getPubKeys()`, which may expose separate `identityPubKey`, `bsvPubKey`, and `ordPubKey` keys.
+   - **Challenge Signing (`signChallenge`)**: Calls `signMessage({ message, encoding: 'utf8' })` (`signatureScheme: 'bsm'`). Because Yours extension versions may sign `signMessage()` with either `identityPubKey` or `bsvPubKey` (and `identityPubKey` and `bsvPubKey` are not interchangeable), `YoursWalletAdapter.signChallenge()` cryptographically verifies every candidate compressed public key returned by `getPubKeys()` via `verifyWalletChallengeSignature(..., { signatureScheme: 'bsm' })` (and checks any returned `address` against `PublicKey.toAddress('mainnet' | 'testnet')`).
+   - **Key Separation Guarantee**: If `bsvPubKey` produced the BSM signature, the adapter aligns the returned `publicKey` (and authenticated identity key) to that exact verified signing key and rejects any signature not verifiable against `getPubKeys()`. Because legacy `window.yours` cannot prove BRC-42 derivation, `canMintOrdinal` is `false` and `payoutScript` remains `undefined` (never silently derived from `identityKey`).
+
 ## 4. Cryptographic Destination Verification & Authoritative Ownership
 
 1. **No Identity-Key Payout Derivation:** The server never derives a P2PKH `payoutScript` from a BRC-100 root `identityKey`.
@@ -57,7 +72,7 @@ Shared BRC-100 behavior in `src/adapters/wallets/brc100-shared.ts`:
    - `destinationProof.publicKey` must be a valid compressed secp256k1 key **distinct from** the wallet's `identityKey`.
    - `deriveP2PKHScriptFromPublicKey(destinationProof.publicKey)` must equal `lockingScript` / `payoutScript`.
    - Signature over `formatDestinationOwnershipProofMessage(...)` must verify cryptographically against the wallet's BRC-100 key derivation (`ProtoWallet('anyone')` or ECDSA).
-3. **Live Mint Output Extraction (`OneSatMintingAdapter`):** After minting via Yours or HandCash in `APP_MODE="live"` (blocked on mainnet unless `ALLOW_MAINNET_MINT=true`; `BSV_NETWORK="test"` recommended), `OneSatMintingAdapter` parses the signed transaction bytes (`AtomicBEEF`, multi-tx `Beef`, raw tx bytes, lookup provider, or `OneSatServices`), locates the actual `1`-satoshi output matching the canonical Community NFT inscription and verified `ownerP2PKHScript`, extracts the **actual `vout` index** (never hardcoded `0`) and **actual `rawOutputScriptHex`**, and submits `{ action: 'verify-tx', txid, vout, expectedOrigin }` to `/api/communities/[slug]/nft/confirm-mint`.
+3. **Live Mint Output Extraction (`OneSatMintingAdapter`):** After minting via Yours or HandCash in `APP_MODE="live"` (blocked on mainnet unless `APP_MODE="live"`, `BSV_NETWORK="main"`, and `ALLOW_MAINNET_BROADCAST="true"` are all explicitly configured; `BSV_NETWORK="test"` is the default for live wallet testing), `OneSatMintingAdapter` parses the signed transaction bytes (`AtomicBEEF`, multi-tx `Beef`, raw tx bytes, lookup provider, or `OneSatServices`), locates the actual `1`-satoshi output matching the canonical Community NFT inscription and verified `ownerP2PKHScript`, extracts the **actual `vout` index** (never hardcoded `0`) and **actual `rawOutputScriptHex`**, and submits `{ action: 'verify-tx', txid, vout, expectedOrigin }` to `/api/communities/[slug]/nft/confirm-mint`.
 4. **Authoritative Community Ownership:** Only after `MintVerificationService` independently verifies the minted transaction on-chain (and confirmation count `>= OWNERSHIP_CONFIRMATIONS_REQUIRED`) does `Community.currentOwnerScript` become the verified locking script and `Community.status` transition to `ACTIVE`.
 
 ## 5. Security Architecture

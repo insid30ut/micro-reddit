@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
-import { getWalletAuthService } from '@/lib/auth/auth-service';
+import {
+  getWalletAuthService,
+  WalletAuthError,
+} from '@/lib/auth/auth-service';
 import {
   getSessionTokenFromRequest,
   resolveRequestDomain,
@@ -45,6 +48,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       expiresAt: challenge.expiresAt.toISOString(),
     });
   } catch (error) {
+    if (error instanceof WalletAuthError) {
+      return NextResponse.json(
+        {
+          error: error.code,
+          message: error.message,
+        },
+        { status: error.statusCode }
+      );
+    }
+
     return NextResponse.json(
       {
         error: 'CHALLENGE_GENERATION_FAILED',

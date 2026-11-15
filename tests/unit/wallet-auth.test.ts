@@ -1,6 +1,10 @@
+import { NextRequest } from 'next/server';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BSM, PrivateKey, ProtoWallet, Utils, type WalletInterface } from '@bsv/sdk';
 import type { PrismaClient } from '@/generated/prisma/client';
+import { POST as challengePostRoute } from '@/app/api/auth/challenge/route';
+import { POST as verifyPostRoute } from '@/app/api/auth/verify/route';
+import { POST as walletConnectPostRoute } from '@/app/api/wallets/connect/route';
 import { createTestPGlitePrisma } from '../helpers/pglite-prisma';
 import { MockWalletAdapter } from '../../src/adapters/wallets/mock.adapter.js';
 import {
@@ -30,6 +34,7 @@ import {
   formatDestinationOwnershipProofMessage,
   verifyDestinationOwnershipProof,
 } from '../../src/lib/auth/crypto-verify.js';
+import { resolveRequestDomain } from '../../src/lib/auth/http-helpers.js';
 import { SessionStore } from '../../src/lib/auth/session-service.js';
 import { WalletConnectionStateManager } from '../../src/lib/auth/wallet-state.js';
 
@@ -975,27 +980,35 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
         })
     ).toThrow(/placeholder/i);
 
-    // Strong secret in production produces Secure + HttpOnly + SameSite=lax cookies
-    const adapter = new MockWalletAdapter({ persona: 'alice' });
-    const conn = await adapter.connect();
+    // Strong secret in production/live produces Secure + HttpOnly + SameSite=lax cookies using a real provider (Yours)
+    const yoursProdSub = createBRC100WalletSubstrate({
+      seedLabel: 'prod-cookie-yours-user',
+      version: 'yours-2.5.0',
+      network: 'testnet',
+    });
+    const yoursProdAdapter = new YoursWalletAdapter({
+      brc100Wallet: yoursProdSub.walletClient,
+    });
+    const conn = await yoursProdAdapter.connect();
     const prodService = new WalletAuthService({
       prisma,
       sessionSecret: 'prod-9f8e7d6c5b4a3928172635445566778899aabbccddeeff',
-      envSource: { NODE_ENV: 'production', APP_MODE: 'live' },
+      envSource: { NODE_ENV: 'production', APP_MODE: 'live', BSV_NETWORK: 'test' },
     });
 
     const challenge = await prodService.issueChallenge({
-      provider: 'mock',
+      provider: 'yours',
       domain: appDomain,
     });
-    const sig = await adapter.signChallenge(challenge.challengeText);
+    const sig = await yoursProdAdapter.signChallenge(challenge.challengeText);
     const authRes = await prodService.verifyChallengeAndAuthenticate({
       challengeId: challenge.id,
-      provider: 'mock',
+      provider: 'yours',
       publicKey: sig.publicKey,
       identityKey: conn.identityKey,
       signature: sig.signature,
       ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      ...(sig.signatureScheme ? { signatureScheme: sig.signatureScheme } : {}),
       expectedDomain: appDomain,
     });
 
@@ -1391,5 +1404,514 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     expect(sessionCtx?.activeWallet?.payoutScript).toBe(
       destProof.lockingScript
     );
+  });
+
+  it('20. Rejects provider="mock" on server and API routes when APP_MODE="live" while preserving mock mode in development', async () => {
+    const liveAuthService = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+      envSource: { APP_MODE: 'live', BSV_NETWORK: 'test' },
+    });
+
+    // 1. Direct WalletAuthService.issueChallenge rejects mock in live mode (403 MOCK_PROVIDER_FORBIDDEN)
+    await expect(
+      liveAuthService.issueChallenge({
+        provider: 'mock',
+        domain: appDomain,
+      })
+    ).rejects.toMatchObject({
+      code: 'MOCK_PROVIDER_FORBIDDEN',
+      statusCode: 403,
+    });
+
+    // 2. Direct verifyChallengeAndAuthenticate and getSessionContext also reject mock in live mode
+    const mockAdapter = new MockWalletAdapter({ persona: 'alice', network: 'test' });
+    const mockConn = await mockAdapter.connect();
+    const devChallenge = await authService.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const devSig = await mockAdapter.signChallenge(devChallenge.challengeText);
+
+    await expect(
+      liveAuthService.verifyChallengeAndAuthenticate({
+        challengeId: devChallenge.id,
+        provider: 'mock',
+        publicKey: devSig.publicKey,
+        identityKey: mockConn.identityKey,
+        signature: devSig.signature,
+        ...(devSig.keyID ? { keyID: devSig.keyID } : {}),
+        expectedDomain: appDomain,
+      })
+    ).rejects.toMatchObject({
+      code: 'MOCK_PROVIDER_FORBIDDEN',
+      statusCode: 403,
+    });
+
+    // Authenticate in mock mode, then verify mock session is rejected by live service
+    const devSession = await authService.verifyChallengeAndAuthenticate({
+      challengeId: devChallenge.id,
+      provider: 'mock',
+      publicKey: devSig.publicKey,
+      identityKey: mockConn.identityKey,
+      signature: devSig.signature,
+      ...(devSig.keyID ? { keyID: devSig.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+    expect(devSession.activeWallet.provider).toBe('mock');
+
+    await expect(
+      liveAuthService.getSessionContext(devSession.sessionToken)
+    ).rejects.toMatchObject({
+      code: 'MOCK_PROVIDER_FORBIDDEN',
+      statusCode: 403,
+    });
+
+    // 3. HTTP Route Handlers (/api/auth/challenge, /api/auth/verify, /api/wallets/connect)
+    const globalAuthHolder = globalThis as unknown as {
+      walletAuthServiceSingleton?: WalletAuthService;
+    };
+    const previousSingleton = globalAuthHolder.walletAuthServiceSingleton;
+    const prevAppMode = process.env.APP_MODE;
+    const prevAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+
+    try {
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      process.env.APP_MODE = 'live';
+      globalAuthHolder.walletAuthServiceSingleton = liveAuthService;
+
+      const liveChallengeReq = new NextRequest('http://localhost:3000/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', host: 'localhost:3000' },
+        body: JSON.stringify({ provider: 'mock' }),
+      });
+      const liveChallengeRes = await challengePostRoute(liveChallengeReq);
+      expect(liveChallengeRes.status).toBe(403);
+      const liveChallengeJson = (await liveChallengeRes.json()) as { error: string };
+      expect(liveChallengeJson.error).toBe('MOCK_PROVIDER_FORBIDDEN');
+
+      const fakeVerifyPayload = {
+        challengeId: '11111111-1111-4111-8111-111111111111',
+        provider: 'mock',
+        publicKey: mockConn.publicKey,
+        identityKey: mockConn.identityKey,
+        signature: devSig.signature,
+        keyID: devSig.keyID,
+      };
+
+      const liveVerifyRes = await verifyPostRoute(
+        new NextRequest('http://localhost:3000/api/auth/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', host: 'localhost:3000' },
+          body: JSON.stringify(fakeVerifyPayload),
+        })
+      );
+      expect(liveVerifyRes.status).toBe(403);
+      expect(((await liveVerifyRes.json()) as { error: string }).error).toBe(
+        'MOCK_PROVIDER_FORBIDDEN'
+      );
+
+      const liveConnectRes = await walletConnectPostRoute(
+        new NextRequest('http://localhost:3000/api/wallets/connect', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', host: 'localhost:3000' },
+          body: JSON.stringify(fakeVerifyPayload),
+        })
+      );
+      expect(liveConnectRes.status).toBe(403);
+      expect(((await liveConnectRes.json()) as { error: string }).error).toBe(
+        'MOCK_PROVIDER_FORBIDDEN'
+      );
+
+      // Verify mock mode routes STILL succeed in local development (APP_MODE="mock")
+      process.env.APP_MODE = 'mock';
+      globalAuthHolder.walletAuthServiceSingleton = authService;
+
+      const mockChallengeRes = await challengePostRoute(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', host: 'localhost:3000' },
+          body: JSON.stringify({ provider: 'mock' }),
+        })
+      );
+      expect(mockChallengeRes.status).toBe(200);
+      const issued = (await mockChallengeRes.json()) as {
+        challengeId: string;
+        challengeText: string;
+      };
+      const routeSig = await mockAdapter.signChallenge(issued.challengeText);
+      const mockVerifyRes = await verifyPostRoute(
+        new NextRequest('http://localhost:3000/api/auth/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', host: 'localhost:3000' },
+          body: JSON.stringify({
+            challengeId: issued.challengeId,
+            provider: 'mock',
+            publicKey: routeSig.publicKey,
+            identityKey: mockConn.identityKey,
+            signature: routeSig.signature,
+            keyID: routeSig.keyID,
+          }),
+        })
+      );
+      expect(mockVerifyRes.status).toBe(200);
+      expect(((await mockVerifyRes.json()) as { authenticated: boolean }).authenticated).toBe(
+        true
+      );
+    } finally {
+      globalAuthHolder.walletAuthServiceSingleton = previousSingleton;
+      if (prevAppMode === undefined) delete process.env.APP_MODE;
+      else process.env.APP_MODE = prevAppMode;
+      if (prevAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = prevAppUrl;
+    }
+  });
+
+  it('21. Hardens resolveRequestDomain against spoofed, comma-separated, and malformed Host / X-Forwarded-Host headers', async () => {
+    const devEnv = {
+      NODE_ENV: 'development',
+      APP_MODE: 'mock',
+      NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
+    };
+
+    // Trusted local development hosts succeed
+    expect(
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: { host: 'localhost:3000' },
+        }),
+        devEnv
+      )
+    ).toBe('localhost:3000');
+
+    expect(
+      resolveRequestDomain(
+        new NextRequest('http://127.0.0.1:4000/api/auth/challenge', {
+          headers: { host: '127.0.0.1:4000' },
+        }),
+        devEnv
+      )
+    ).toBe('127.0.0.1:4000');
+
+    expect(
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: { host: '[::1]:3000' },
+        }),
+        devEnv
+      )
+    ).toBe('[::1]:3000');
+
+    // Spoofed Host header rejected
+    expect(() =>
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: { host: 'evil-phishing.example.com' },
+        }),
+        devEnv
+      )
+    ).toThrowError(WalletAuthError);
+
+    // Spoofed X-Forwarded-Host rejected even when Host is localhost
+    expect(() =>
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: {
+            host: 'localhost:3000',
+            'x-forwarded-host': 'attacker.example.com',
+          },
+        }),
+        devEnv
+      )
+    ).toThrowError(/x-forwarded-host/i);
+
+    // Comma-separated multi-host Host and X-Forwarded-Host rejected
+    expect(() =>
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: { host: 'localhost:3000, evil.com' },
+        }),
+        devEnv
+      )
+    ).toThrowError(WalletAuthError);
+
+    expect(() =>
+      resolveRequestDomain(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          headers: {
+            host: 'localhost:3000',
+            'x-forwarded-host': 'localhost:3000, evil.com',
+          },
+        }),
+        devEnv
+      )
+    ).toThrowError(WalletAuthError);
+
+    // Malformed authority strings (path, userinfo, out-of-range port, query, empty) rejected
+    for (const badHost of [
+      '',
+      'localhost:3000/evil',
+      'user@localhost:3000',
+      'localhost:99999',
+      'localhost:3000?next=evil',
+    ]) {
+      expect(() =>
+        resolveRequestDomain(
+          new NextRequest('http://localhost:3000/api/auth/challenge', {
+            headers: { host: badHost },
+          }),
+          devEnv
+        )
+      ).toThrowError(WalletAuthError);
+    }
+
+    // Live production allowlist: rejects arbitrary localhost, accepts NEXT_PUBLIC_APP_URL and ALLOWED_AUTH_DOMAINS
+    const liveDomainEnv = {
+      NODE_ENV: 'production',
+      APP_MODE: 'live',
+      NEXT_PUBLIC_APP_URL: 'https://communities.example.com',
+      ALLOWED_AUTH_DOMAINS: 'staging.example.com, preview.example.com',
+      TRUST_PROXY_HEADERS: 'true',
+    };
+
+    expect(() =>
+      resolveRequestDomain(
+        new NextRequest('https://communities.example.com/api/auth/challenge', {
+          headers: { host: 'localhost:3000' },
+        }),
+        liveDomainEnv
+      )
+    ).toThrowError(WalletAuthError);
+
+    expect(
+      resolveRequestDomain(
+        new NextRequest('https://communities.example.com/api/auth/challenge', {
+          headers: {
+            host: 'internal-origin:3000',
+            'x-forwarded-host': 'preview.example.com',
+          },
+        }),
+        liveDomainEnv
+      )
+    ).toBe('preview.example.com');
+
+    // When TRUST_PROXY_HEADERS is false, ignore x-forwarded-host (even if in allowlist) and use Host
+    expect(
+      resolveRequestDomain(
+        new NextRequest('https://communities.example.com/api/auth/challenge', {
+          headers: {
+            host: 'communities.example.com',
+            'x-forwarded-host': 'preview.example.com',
+          },
+        }),
+        { ...liveDomainEnv, TRUST_PROXY_HEADERS: 'false' }
+      )
+    ).toBe('communities.example.com');
+
+    // End-to-end API route rejects spoofed X-Forwarded-Host with 400 DOMAIN_MISMATCH
+    const globalAuthHolder = globalThis as unknown as {
+      walletAuthServiceSingleton?: WalletAuthService;
+    };
+    const previousSingleton = globalAuthHolder.walletAuthServiceSingleton;
+    const prevAppUrl = process.env.NEXT_PUBLIC_APP_URL;
+    try {
+      process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
+      globalAuthHolder.walletAuthServiceSingleton = authService;
+
+      const spoofedRouteRes = await challengePostRoute(
+        new NextRequest('http://localhost:3000/api/auth/challenge', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            host: 'localhost:3000',
+            'x-forwarded-host': 'phishing.attacker.example',
+          },
+          body: JSON.stringify({ provider: 'mock' }),
+        })
+      );
+      expect(spoofedRouteRes.status).toBe(400);
+      expect(((await spoofedRouteRes.json()) as { error: string }).error).toBe(
+        'DOMAIN_MISMATCH'
+      );
+    } finally {
+      globalAuthHolder.walletAuthServiceSingleton = previousSingleton;
+      if (prevAppUrl === undefined) delete process.env.NEXT_PUBLIC_APP_URL;
+      else process.env.NEXT_PUBLIC_APP_URL = prevAppUrl;
+    }
+  });
+
+  it('22. Verifies Yours window.yours BSM signature compatibility across distinct identityPubKey and bsvPubKey keys and rejects mismatched keys', async () => {
+    const idPriv = new PrivateKey(
+      Array.from({ length: 32 }, (_, i) => (i + 11) * 3)
+    );
+    const bsvPriv = new PrivateKey(
+      Array.from({ length: 32 }, (_, i) => (i + 47) * 5)
+    );
+    const ordPriv = new PrivateKey(
+      Array.from({ length: 32 }, (_, i) => (i + 83) * 7)
+    );
+    const unknownPriv = new PrivateKey(
+      Array.from({ length: 32 }, (_, i) => (i + 101) * 9)
+    );
+
+    const idPubHex = idPriv.toPublicKey().toString().toLowerCase();
+    const bsvPubHex = bsvPriv.toPublicKey().toString().toLowerCase();
+    const ordPubHex = ordPriv.toPublicKey().toString().toLowerCase();
+    expect(idPubHex).not.toBe(bsvPubHex);
+
+    // Case A: window.yours signs BSM challenge with identityPubKey (distinct from bsvPubKey)
+    const identitySignedExt: YoursInjectedExtension = {
+      isReady: true,
+      async connect() {
+        return idPubHex;
+      },
+      async getPubKeys() {
+        return {
+          identityPubKey: idPubHex,
+          bsvPubKey: bsvPubHex,
+          ordPubKey: ordPubHex,
+        };
+      },
+      async getNetwork() {
+        return 'testnet';
+      },
+      async signMessage({ message }) {
+        const msgBytes = Utils.toArray(message, 'utf8');
+        return {
+          signedMessage: {
+            message,
+            sig: BSM.sign(msgBytes, idPriv, 'base64') as string,
+            address: idPriv.toPublicKey().toAddress('testnet'),
+          },
+        };
+      },
+    };
+
+    const adapterA = new YoursWalletAdapter({
+      injectedExtension: identitySignedExt,
+    });
+    const connA = await adapterA.connect();
+    expect(connA.identityKey).toBe(idPubHex);
+    expect(connA.payoutScript).toBeUndefined();
+
+    const chA = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const sigA = await adapterA.signChallenge(chA.challengeText);
+    expect(sigA.publicKey).toBe(idPubHex);
+
+    const authA = await authService.verifyChallengeAndAuthenticate({
+      challengeId: chA.id,
+      provider: 'yours',
+      publicKey: sigA.publicKey,
+      identityKey: (await adapterA.getIdentity()).identityKey,
+      signature: sigA.signature,
+      signatureScheme: 'bsm',
+      expectedDomain: appDomain,
+    });
+    expect(authA.activeWallet.identityKey).toBe(idPubHex);
+    expect(authA.activeWallet.payoutScript).toBeNull();
+
+    // Case B: window.yours signs BSM challenge with bsvPubKey (distinct from identityPubKey)
+    await authService.clear();
+    const bsvSignedExt: YoursInjectedExtension = {
+      ...identitySignedExt,
+      async signMessage({ message }) {
+        const msgBytes = Utils.toArray(message, 'utf8');
+        return {
+          signedMessage: {
+            message,
+            sig: BSM.sign(msgBytes, bsvPriv, 'base64') as string,
+            address: bsvPriv.toPublicKey().toAddress('testnet'),
+          },
+        };
+      },
+    };
+
+    const adapterB = new YoursWalletAdapter({
+      injectedExtension: bsvSignedExt,
+    });
+    await adapterB.connect();
+
+    const chB = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const sigB = await adapterB.signChallenge(chB.challengeText);
+    // Adapter detects that bsvPubKey actually signed and aligns authenticated publicKey/identityKey to bsvPubKey
+    expect(sigB.publicKey).toBe(bsvPubHex);
+    expect((await adapterB.getIdentity()).identityKey).toBe(bsvPubHex);
+    expect((await adapterB.getIdentity()).payoutScript).toBeUndefined();
+
+    const authB = await authService.verifyChallengeAndAuthenticate({
+      challengeId: chB.id,
+      provider: 'yours',
+      publicKey: sigB.publicKey,
+      identityKey: (await adapterB.getIdentity()).identityKey,
+      signature: sigB.signature,
+      signatureScheme: 'bsm',
+      expectedDomain: appDomain,
+    });
+    expect(authB.activeWallet.identityKey).toBe(bsvPubHex);
+    expect(authB.activeWallet.payoutScript).toBeNull();
+
+    // Case B2: WalletConnectionStateManager preserves signing-key alignment after signChallenge()
+    await authService.clear();
+    const stateManagerB = new WalletConnectionStateManager();
+    const stateConnB = await stateManagerB.connectProvider(
+      'yours',
+      undefined,
+      new YoursWalletAdapter({ injectedExtension: bsvSignedExt })
+    );
+    expect(stateConnB.identityKey).toBe(idPubHex);
+
+    const chB2 = await authService.issueChallenge({
+      provider: 'yours',
+      domain: appDomain,
+    });
+    const stateAuthB2 = await stateManagerB.authenticateWithChallenge(
+      chB2.challengeText,
+      async (signed) =>
+        authService.verifyChallengeAndAuthenticate({
+          challengeId: chB2.id,
+          provider: signed.provider,
+          publicKey: signed.publicKey,
+          identityKey: signed.identity.identityKey,
+          signature: signed.signature,
+          ...(signed.signatureScheme
+            ? { signatureScheme: signed.signatureScheme }
+            : {}),
+          expectedDomain: appDomain,
+        })
+    );
+    expect(stateAuthB2.activeWallet.identityKey).toBe(bsvPubHex);
+    expect(stateAuthB2.activeWallet.payoutScript).toBeNull();
+
+    // Case C: window.yours returns a signature from an unknown key not matching getPubKeys() -> rejected immediately
+    const badSignedExt: YoursInjectedExtension = {
+      ...identitySignedExt,
+      async signMessage({ message }) {
+        const msgBytes = Utils.toArray(message, 'utf8');
+        return {
+          signedMessage: {
+            message,
+            sig: BSM.sign(msgBytes, unknownPriv, 'base64') as string,
+            address: unknownPriv.toPublicKey().toAddress('testnet'),
+          },
+        };
+      },
+    };
+    const adapterC = new YoursWalletAdapter({
+      injectedExtension: badSignedExt,
+    });
+    await adapterC.connect();
+    await expect(
+      adapterC.signChallenge(chB.challengeText)
+    ).rejects.toMatchObject({
+      name: 'WalletConnectionError',
+      provider: 'yours',
+      code: 'AUTHENTICATION_FAILED',
+    });
   });
 });

@@ -1,5 +1,5 @@
 import type { InscribeRequest, InscribeResponse, OneSatContext } from '@1sat/actions';
-import { WalletClient, Utils, type WalletInterface } from '@bsv/sdk';
+import { PublicKey, WalletClient, Utils, type WalletInterface } from '@bsv/sdk';
 import type { MintTransactionLookupProvider } from '@/adapters/ordinals/minting-adapter';
 import { OneSatMintingAdapter } from '@/adapters/ordinals/onesat-minting.adapter';
 import {
@@ -17,6 +17,7 @@ import {
   DEFAULT_AUTH_KEY_ID,
   extractNonceFromChallenge,
   isValidCompressedPublicKey,
+  verifyWalletChallengeSignature,
 } from '@/lib/auth/crypto-verify';
 import type {
   MintOrdinalInput,
@@ -154,6 +155,11 @@ export class YoursWalletAdapter implements WalletAdapter {
   private readonly options: YoursWalletAdapterOptions;
   private activeBrc100Wallet: WalletInterface | null = null;
   private activeExtension: YoursInjectedExtension | null = null;
+  private extensionPubKeys: {
+    identityPubKey: string;
+    bsvPubKey?: string;
+    ordPubKey?: string;
+  } | null = null;
   private cachedIdentity: WalletIdentity | null = null;
   private cachedDestination: VerifiedWalletDestination | null = null;
 
@@ -290,6 +296,7 @@ export class YoursWalletAdapter implements WalletAdapter {
         // Call `deriveDestination()` explicitly to derive and cryptographically prove a payment key.
         this.activeBrc100Wallet = candidateBrc100;
         this.activeExtension = null;
+        this.extensionPubKeys = null;
         this.cachedDestination = null;
         const capabilities = this.getCapabilities();
         this.cachedIdentity = {
@@ -311,6 +318,7 @@ export class YoursWalletAdapter implements WalletAdapter {
         ) {
           this.activeBrc100Wallet = null;
           this.activeExtension = null;
+          this.extensionPubKeys = null;
           this.cachedIdentity = null;
           this.cachedDestination = null;
           throw normalizedErr;
@@ -333,7 +341,10 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        let network: 'main' | 'test' = 'main';
+        const normalizedBsvKey = pubKeys.bsvPubKey?.trim().toLowerCase();
+        const normalizedOrdKey = pubKeys.ordPubKey?.trim().toLowerCase();
+
+        let network: 'main' | 'test' = 'test';
         if (extension.getNetwork) {
           network = normalizeBsvNetwork(await extension.getNetwork());
         }
@@ -343,6 +354,15 @@ export class YoursWalletAdapter implements WalletAdapter {
         // attach an unverified payoutScript.
         this.activeExtension = extension;
         this.activeBrc100Wallet = null;
+        this.extensionPubKeys = {
+          identityPubKey: normalizedIdentityKey,
+          ...(normalizedBsvKey && isValidCompressedPublicKey(normalizedBsvKey)
+            ? { bsvPubKey: normalizedBsvKey }
+            : {}),
+          ...(normalizedOrdKey && isValidCompressedPublicKey(normalizedOrdKey)
+            ? { ordPubKey: normalizedOrdKey }
+            : {}),
+        };
         this.cachedDestination = null;
         const capabilities = this.getCapabilities();
         this.cachedIdentity = {
@@ -359,6 +379,7 @@ export class YoursWalletAdapter implements WalletAdapter {
       } catch (err) {
         this.activeBrc100Wallet = null;
         this.activeExtension = null;
+        this.extensionPubKeys = null;
         this.cachedIdentity = null;
         this.cachedDestination = null;
         throw this.normalizeError(err);
@@ -382,6 +403,7 @@ export class YoursWalletAdapter implements WalletAdapter {
     }
     this.activeBrc100Wallet = null;
     this.activeExtension = null;
+    this.extensionPubKeys = null;
     this.cachedIdentity = null;
     this.cachedDestination = null;
   }
@@ -483,6 +505,10 @@ export class YoursWalletAdapter implements WalletAdapter {
           'signedMessage' in response
             ? response.signedMessage.sig
             : response.sig;
+        const signerAddress =
+          'signedMessage' in response
+            ? response.signedMessage.address
+            : response.address;
 
         if (!sig) {
           throw new WalletConnectionError(
@@ -492,9 +518,75 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
+        const candidateKeys = Array.from(
+          new Set(
+            [
+              this.cachedIdentity.identityKey,
+              this.cachedIdentity.publicKey,
+              this.extensionPubKeys?.identityPubKey,
+              this.extensionPubKeys?.bsvPubKey,
+              this.extensionPubKeys?.ordPubKey,
+            ]
+              .map((k) => k?.trim().toLowerCase())
+              .filter(
+                (k): k is string => Boolean(k && isValidCompressedPublicKey(k))
+              )
+          )
+        );
+
+        let verifiedSigningKey: string | null = null;
+        for (const candidatePubKey of candidateKeys) {
+          if (signerAddress) {
+            try {
+              const pubObj = PublicKey.fromString(candidatePubKey);
+              const mainnetAddr = pubObj.toAddress('mainnet');
+              const testnetAddr = pubObj.toAddress('testnet');
+              if (
+                signerAddress !== mainnetAddr &&
+                signerAddress !== testnetAddr
+              ) {
+                continue;
+              }
+            } catch {
+              continue;
+            }
+          }
+
+          const matches = await verifyWalletChallengeSignature({
+            challenge,
+            signature: sig,
+            publicKey: candidatePubKey,
+            keyID,
+            signatureScheme: 'bsm',
+          });
+          if (matches) {
+            verifiedSigningKey = candidatePubKey;
+            break;
+          }
+        }
+
+        if (!verifiedSigningKey) {
+          throw new WalletConnectionError(
+            'yours',
+            'AUTHENTICATION_FAILED',
+            'Yours Wallet extension returned a BSM signature that does not verify against any public key reported by getPubKeys().'
+          );
+        }
+
+        if (
+          verifiedSigningKey !== this.cachedIdentity.publicKey ||
+          verifiedSigningKey !== this.cachedIdentity.identityKey
+        ) {
+          this.cachedIdentity = {
+            ...this.cachedIdentity,
+            identityKey: verifiedSigningKey,
+            publicKey: verifiedSigningKey,
+          };
+        }
+
         return {
           signature: sig,
-          publicKey: this.cachedIdentity.publicKey,
+          publicKey: verifiedSigningKey,
           challenge,
           keyID,
           signatureScheme: 'bsm',

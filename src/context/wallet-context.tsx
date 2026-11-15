@@ -477,6 +477,7 @@ export function AppWalletProvider({
         const signatureResult = await adapter.signChallenge(
           challengePayload.challengeText
         );
+        const postSignIdentity = await adapter.getIdentity();
 
         const verifyResponse = await fetch('/api/auth/verify', {
           method: 'POST',
@@ -486,7 +487,7 @@ export function AppWalletProvider({
             challengeId: challengePayload.challengeId,
             provider,
             publicKey: signatureResult.publicKey,
-            identityKey: connection.identityKey,
+            identityKey: postSignIdentity.identityKey,
             signature: signatureResult.signature,
             ...(signatureResult.keyID ? { keyID: signatureResult.keyID } : {}),
             ...(signatureResult.signatureScheme
@@ -527,8 +528,8 @@ export function AppWalletProvider({
         setNetwork(connection.network);
         setIdentity({
           provider: connection.provider,
-          identityKey: connection.identityKey,
-          publicKey: connection.publicKey,
+          identityKey: postSignIdentity.identityKey,
+          publicKey: postSignIdentity.publicKey,
           network: connection.network,
           ...(verifyPayload.activeWallet?.payoutScript
             ? { payoutScript: verifyPayload.activeWallet.payoutScript }
@@ -549,7 +550,7 @@ export function AppWalletProvider({
 
         await Promise.all([refreshSession(), refreshDiscovery()]);
         setStatusMessage(
-          `Authenticated via ${provider} wallet (${connection.identityKey.slice(0, 12)}...).`
+          `Authenticated via ${provider} wallet (${postSignIdentity.identityKey.slice(0, 12)}...).`
         );
       } catch (err) {
         activeAdapterRef.current = null;

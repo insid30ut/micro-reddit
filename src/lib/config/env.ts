@@ -126,7 +126,16 @@ const rawEnvSchema = z
       .default('http://localhost:3000'),
     APP_MODE: z.enum(['mock', 'live']).default('mock'),
     NEXT_PUBLIC_APP_MODE: z.enum(['mock', 'live']).default('mock'),
-    BSV_NETWORK: z.enum(['main', 'test']).default('main'),
+    BSV_NETWORK: z.enum(['main', 'test']).default('test'),
+    ALLOW_MAINNET_BROADCAST: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((val) => val === 'true'),
+    ALLOWED_AUTH_DOMAINS: z.string().optional().default(''),
+    TRUST_PROXY_HEADERS: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((val) => val === 'true'),
     PLATFORM_PAYOUT_SCRIPT: z
       .string()
       .refine(
@@ -245,6 +254,61 @@ export type AppEnvConfig = z.infer<typeof rawEnvSchema>;
  */
 export function parseAppEnv(source: Record<string, string | undefined> = process.env): AppEnvConfig {
   return rawEnvSchema.parse(source);
+}
+
+/**
+ * Evaluates whether a blockchain transaction broadcast is permitted under the active
+ * configuration and target network.
+ *
+ * Mainnet broadcasting requires ALL THREE flags:
+ * - `APP_MODE === "live"`
+ * - `BSV_NETWORK === "main"` (matching `targetNetwork`)
+ * - `ALLOW_MAINNET_BROADCAST === true`
+ *
+ * Mock mode (`APP_MODE === "mock"`) never authorizes real transaction broadcasting.
+ */
+export function canBroadcastTransaction(
+  config: AppEnvConfig,
+  targetNetwork: 'main' | 'test' = config.BSV_NETWORK
+): { allowed: boolean; reason?: string } {
+  if (config.APP_MODE !== 'live') {
+    return {
+      allowed: false,
+      reason:
+        'Live blockchain broadcasting/minting/spending is disabled while APP_MODE is "mock". Explicit approval and live configuration are required.',
+    };
+  }
+
+  if (targetNetwork !== config.BSV_NETWORK) {
+    return {
+      allowed: false,
+      reason: `Target network "${targetNetwork}" does not match configured BSV_NETWORK "${config.BSV_NETWORK}".`,
+    };
+  }
+
+  if (targetNetwork === 'main' && !config.ALLOW_MAINNET_BROADCAST) {
+    return {
+      allowed: false,
+      reason:
+        'Mainnet transaction broadcasting is disabled unless APP_MODE="live", BSV_NETWORK="main", and ALLOW_MAINNET_BROADCAST="true" are all explicitly configured.',
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Guard helper that throws if transaction broadcasting to `targetNetwork`
+ * (defaulting to `config.BSV_NETWORK`) is not explicitly authorized.
+ */
+export function assertBroadcastAuthorized(
+  config: AppEnvConfig = parseAppEnv(),
+  targetNetwork: 'main' | 'test' = config.BSV_NETWORK
+): void {
+  const verdict = canBroadcastTransaction(config, targetNetwork);
+  if (!verdict.allowed) {
+    throw new Error(verdict.reason ?? 'Transaction broadcast is not authorized.');
+  }
 }
 
 /**

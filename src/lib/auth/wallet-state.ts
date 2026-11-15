@@ -125,9 +125,18 @@ export class WalletConnectionStateManager {
 
     try {
       const sigResult = await this.activeAdapter.signChallenge(challengeText);
+      const refreshedIdentity = await this.activeAdapter.getIdentity();
+      this.identity = {
+        ...this.identity,
+        identityKey: refreshedIdentity.identityKey,
+        publicKey: refreshedIdentity.publicKey,
+        ...(refreshedIdentity.payoutScript
+          ? { payoutScript: refreshedIdentity.payoutScript }
+          : {}),
+      };
       const verified = await verifyFn({
         provider: this.selectedProvider,
-        identity: this.identity,
+        identity: { ...this.identity },
         signature: sigResult.signature,
         publicKey: sigResult.publicKey,
         ...(sigResult.keyID ? { keyID: sigResult.keyID } : {}),
