@@ -83,6 +83,7 @@ model WalletConnection {
   ownedCommunities Community[] @relation("CurrentOwnerWallet")
 
   @@unique([provider, identityKey])
+  @@index([userId])
   @@index([currentPayoutScript])
   @@map("wallet_connections")
 }
@@ -114,6 +115,8 @@ model Community {
   paymentIntents               PaymentIntent[]
   paidActivities               PaidActivity[]
 
+  @@index([originalCreatorId])
+  @@index([currentOwnerWalletConnectionId])
   @@index([currentOwnerScript])
   @@map("communities")
 }
@@ -267,6 +270,7 @@ model PaidActivity {
   community Community @relation(fields: [communityId], references: [id], onDelete: Restrict)
   payment   Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
+  @@index([userId])
   @@index([communityId, createdAt])
   @@map("paid_activities")
 }

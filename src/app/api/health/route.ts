@@ -6,9 +6,10 @@ export async function GET() {
 
   return NextResponse.json({
     status: 'ok',
-    phase: 1,
+    phase: 2,
     appMode: env.APP_MODE,
     bsvNetwork: env.BSV_NETWORK,
+    supabaseUrl: env.NEXT_PUBLIC_SUPABASE_URL ?? null,
     ownerShareBps: env.OWNER_SHARE_BPS,
     platformShareBps: env.PLATFORM_SHARE_BPS,
     activityFeeSats: env.ACTIVITY_FEE_SATS,

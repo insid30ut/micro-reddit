@@ -11,27 +11,29 @@ A proof-of-concept application demonstrating that a community can be represented
 5. **PaymentIntent Snapshot Semantics:** Each `PaymentIntent` records an immutable snapshot of the verified owner outpoint and payout script at creation time with a short expiration window (default: 2 minutes). Subsequent ownership transfers apply to new `PaymentIntent` records.
 6. **Safe Mock Mode by Default:** `APP_MODE="mock"` is the default. No mainnet broadcasting, NFT minting, or BSV spending occurs without explicit manual configuration and user approval.
 
-## Quick Start (Phase 1 Foundation)
+## Quick Start (Supabase Connected + Mock Mode Default)
 
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
+1. Copy `.env.example` to `.env` (already pre-populated with public Supabase API settings `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` for `community-nft-poc`, ref `snzitranohtepyzgzmxy`).
+2. To connect the Prisma runtime directly to Supabase over Postgres (outside `mock` / `PGlite` test mode), replace `[YOUR-PASSWORD]` in the documented `DATABASE_URL` and `DIRECT_URL` templates in `.env`:
+   ```env
+   DATABASE_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+   DIRECT_URL="postgresql://postgres.snzitranohtepyzgzmxy:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
    ```
-2. Install dependencies:
+3. Install dependencies:
    ```bash
    npm install
    ```
-3. Generate Prisma client and validate schema (11 database models; note: the initial SQL migration `prisma/migrations/20261115000000_init/migration.sql` is tested automatically against an embedded PGlite PostgreSQL engine during `npm test`, and has not yet been applied to an external PostgreSQL or Supabase instance):
+4. Generate Prisma client and validate schema (11 database models). The initial SQL migration (`prisma/migrations/20261115000000_init/migration.sql`) has been applied and verified on the live Supabase PostgreSQL 17 project (`community-nft-poc`, ref `snzitranohtepyzgzmxy`, migration `init_community_nft_poc`) with Row Level Security enabled on all 11 tables and foreign-key indexes added, in addition to automated `PGlite` tests during `npm test`:
    ```bash
    npm run db:generate
    npm run db:validate
    ```
-4. Run type checking and automated tests:
+5. Run type checking and automated tests:
    ```bash
    npm run typecheck
    npm test
    ```
-5. Start the local development server (Mock Mode by default):
+6. Start the local development server (`APP_MODE="mock"` by default):
    ```bash
    npm run dev
    ```

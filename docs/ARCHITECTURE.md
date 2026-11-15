@@ -18,10 +18,10 @@
    - Computes integer satoshi 70/30 splits (`ownerShareBps >= 5000`, `ownerShareBps + platformShareBps == 10000`).
    - Creates short-lived `PaymentIntent` records with an immutable ownership snapshot (`ownerOutpointSnapshot`, `ownerPayoutScript`).
    - Independently verifies submitted transactions (`SUBMITTED` -> `OBSERVED` -> `CONFIRMED`) and only authorizes `PaidActivity` once `PAYMENT_CONFIRMATIONS_REQUIRED` is satisfied.
-6. **Database (Supabase PostgreSQL + Prisma 7 — 11 Models):**
+6. **Database (Supabase PostgreSQL 17 + Prisma 7 — 11 Models):**
    - Configured via `prisma.config.ts` and `@prisma/adapter-pg` (`PrismaPg`).
-   - Defines 11 Prisma models: `User`, `WalletConnection`, `Community`, `CommunityNFT`, `OwnershipEvent`, `RevenuePolicy`, `PaymentIntent`, `Payment`, `PaymentAllocation`, `PaidActivity`, and `AuditEvent`.
-   - Note: The initial migration (`prisma/migrations/20261115000000_init/migration.sql`) has been verified against an embedded PGlite PostgreSQL instance in automated tests, and has not yet been applied to an external PostgreSQL or Supabase instance.
+   - Defines 11 Prisma models: `User`, `WalletConnection`, `Community`, `CommunityNFT`, `OwnershipEvent`, `RevenuePolicy`, `PaymentIntent`, `Payment`, `PaymentAllocation`, `PaidActivity`, and `AuditEvent`, plus foreign-key indexes (`wallet_connections_userId_idx`, `communities_originalCreatorId_idx`, `communities_currentOwnerWalletConnectionId_idx`, `paid_activities_userId_idx`).
+   - **Supabase Deployment & Security:** Applied and verified on the live Supabase PostgreSQL 17 project `community-nft-poc` (ref `snzitranohtepyzgzmxy`, region `us-east-1`, migration `init_community_nft_poc`) matching `prisma/migrations/20261115000000_init/migration.sql`, with Row Level Security (`ENABLE ROW LEVEL SECURITY`) active on all 11 `public` tables to prevent unauthorized PostgREST `anon`/`authenticated` access while server-side Prisma runs with database privileges, in addition to local `PGlite` automated testing.
 
 ## 2. Authority & Trust Boundaries
 

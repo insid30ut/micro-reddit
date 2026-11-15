@@ -198,6 +198,9 @@ CREATE TABLE "audit_events" (
 CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
 
 -- CreateIndex
+CREATE INDEX "wallet_connections_userId_idx" ON "wallet_connections"("userId");
+
+-- CreateIndex
 CREATE INDEX "wallet_connections_currentPayoutScript_idx" ON "wallet_connections"("currentPayoutScript");
 
 -- CreateIndex
@@ -208,6 +211,12 @@ CREATE UNIQUE INDEX "communities_slug_key" ON "communities"("slug");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "communities_nftId_key" ON "communities"("nftId");
+
+-- CreateIndex
+CREATE INDEX "communities_originalCreatorId_idx" ON "communities"("originalCreatorId");
+
+-- CreateIndex
+CREATE INDEX "communities_currentOwnerWalletConnectionId_idx" ON "communities"("currentOwnerWalletConnectionId");
 
 -- CreateIndex
 CREATE INDEX "communities_currentOwnerScript_idx" ON "communities"("currentOwnerScript");
@@ -250,6 +259,9 @@ CREATE UNIQUE INDEX "payment_allocations_paymentId_outputIndex_key" ON "payment_
 
 -- CreateIndex
 CREATE UNIQUE INDEX "paid_activities_paymentId_key" ON "paid_activities"("paymentId");
+
+-- CreateIndex
+CREATE INDEX "paid_activities_userId_idx" ON "paid_activities"("userId");
 
 -- CreateIndex
 CREATE INDEX "paid_activities_communityId_createdAt_idx" ON "paid_activities"("communityId", "createdAt");
@@ -320,5 +332,18 @@ ALTER TABLE "payment_allocations"
     "amountSatoshis" > 0
     AND "outputIndex" >= 0
   );
+
+-- EnableRowLevelSecurity (Defense in depth against direct PostgREST anon/authenticated access)
+ALTER TABLE "users" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "wallet_connections" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "communities" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "community_nfts" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ownership_events" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "revenue_policies" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "payment_intents" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "payments" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "payment_allocations" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "paid_activities" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "audit_events" ENABLE ROW LEVEL SECURITY;
 
 

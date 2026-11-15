@@ -12,7 +12,7 @@
    - Extracts clean 25-byte P2PKH script from suffixed inscription envelope (`<P2PKH> OP_FALSE OP_IF "ord" ... OP_ENDIF`) and trailing `OP_RETURN` MAP metadata.
    - Rejects non-standard / custom / OrdLock scripts and marks `isPayoutRoutable = false`.
 3. **Database Constraint & Payment State Machine Tests (`tests/unit/database-constraints.test.ts`):**
-   - Executes the initial migration (`prisma/migrations/20261115000000_init/migration.sql`, covering all 11 Prisma models) against an embedded PGlite PostgreSQL engine. (Note: the migration has been tested with PGlite but has not yet been applied to a live PostgreSQL or Supabase instance.)
+   - Executes the initial migration (`prisma/migrations/20261115000000_init/migration.sql`, covering all 11 Prisma models, foreign-key indexes, domain `CHECK` constraints, and `ENABLE ROW LEVEL SECURITY`) against an embedded `PGlite` PostgreSQL engine. The identical DDL has also been applied and verified on the live Supabase PostgreSQL 17 project (`community-nft-poc`, ref `snzitranohtepyzgzmxy`, migration `init_community_nft_poc`) with RLS confirmed enabled on all 11 tables and Supabase security/performance advisors checked.
    - Verifies schema & domain constraints:
      - Optional `currentOwnerWalletConnectionId` with required on-chain `currentOwnerScript`.
      - Unique `(provider, identityKey)` on `WalletConnection`.
