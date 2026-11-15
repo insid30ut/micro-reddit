@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WalletProvider {
+  yours
+  handcash
+  mock
+}
+
+enum CommunityStatus {
+  PENDING_MINT
+  ACTIVE
+  PAYOUT_UNAVAILABLE
+  ARCHIVED
+}
+
+enum ConfirmationStatus {
+  UNCONFIRMED
+  CONFIRMED
+  ORPHANED
+}
+
+enum MintStatus {
+  PENDING
+  MINTED
+  VERIFIED
+  FAILED
+}
+
+enum PaymentStatus {
+  CREATED
+  AWAITING_WALLET
+  SUBMITTED
+  OBSERVED
+  CONFIRMED
+  FAILED
+  EXPIRED
+}
+
+enum RecipientType {
+  OWNER
+  PLATFORM
+}
+
+enum PaidActivityStatus {
+  PENDING_CONFIRMATION
+  AUTHORIZED
+  REVOKED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  walletConnections  WalletConnection[]
+  createdCommunities Community[]        @relation("OriginalCreator")
+  paymentIntents     PaymentIntent[]
+  paidActivities     PaidActivity[]
+
+  @@map("users")
+}
+
+model WalletConnection {
+  id                  String         @id @default(cuid())
+  userId              String
+  provider            WalletProvider
+  identityKey         String
+  publicKey           String
+  currentPayoutScript String?
+  connectedAt         DateTime       @default(now())
+  lastAuthenticatedAt DateTime       @default(now())
+
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ownedCommunities Community[] @relation("CurrentOwnerWallet")
+
+  @@unique([provider, identityKey])
+  @@index([currentPayoutScript])
+  @@map("wallet_connections")
+}
+
+model Community {
+  id                             String          @id @default(cuid())
+  name                           String
+  slug                           String          @unique
+  description                    String
+  artworkUrl                     String?
+  status                         CommunityStatus @default(PENDING_MINT)
+  originalCreatorId              String
+  nftId                          String?         @unique
+  /// Verified on-chain locking script (hex) of the current NFT owner.
+  /// Blockchain ownership is authoritative; platform account linkage is optional.
+  currentOwnerScript             String?
+  /// Optional reference to a registered platform wallet connection if the current
+  /// on-chain owner script matches a known WalletConnection. May be null when an
+  /// external BSV wallet receives the NFT off-platform.
+  currentOwnerWalletConnectionId String?
+  createdAt                      DateTime        @default(now())
+  updatedAt                      DateTime        @updatedAt
+
+  originalCreator              User              @relation("OriginalCreator", fields: [originalCreatorId], references: [id], onDelete: Restrict)
+  currentOwnerWalletConnection WalletConnection? @relation("CurrentOwnerWallet", fields: [currentOwnerWalletConnectionId], references: [id], onDelete: SetNull)
+  nft                          CommunityNFT?
+  ownershipEvents              OwnershipEvent[]
+  revenuePolicies              RevenuePolicy[]
+  paymentIntents               PaymentIntent[]
+  paidActivities               PaidActivity[]
+
+  @@index([currentOwnerScript])
+  @@map("communities")
+}
+
+model CommunityNFT {
+  id                      String             @id @default(cuid())
+  communityId             String             @unique
+  protocol                String             @default("1sat")
+  originTxid              String
+  originVout              Int
+  /// Canonical permanent identifier: "<originTxid>_<originVout>"
+  origin                  String             @unique
+  currentTxid             String
+  currentVout             Int
+  /// Extracted underlying spending condition locking script (hex)
+  currentOwnerScript      String
+  /// Optional raw output locking script including 1Sat Ordinal envelope
+  rawOutputScript         String?
+  /// Classified script type: "P2PKH" | "ORDLOCK" | "NON_STANDARD"
+  scriptType              String             @default("P2PKH")
+  /// True only if currentOwnerScript is a verified standard P2PKH script safe for revenue routing
+  isPayoutRoutable        Boolean            @default(true)
+  lastVerifiedBlockHeight Int?
+  lastVerifiedAt          DateTime?
+  confirmationStatus      ConfirmationStatus @default(UNCONFIRMED)
+  mintStatus              MintStatus         @default(PENDING)
+  isMock                  Boolean            @default(false)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  community       Community        @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  ownershipEvents OwnershipEvent[]
+
+  @@unique([originTxid, originVout])
+  @@index([currentOwnerScript])
+  @@map("community_nfts")
+}
+
+model OwnershipEvent {
+  id                  String             @id @default(cuid())
+  communityId         String
+  nftId               String
+  previousOwnerScript String?
+  newOwnerScript      String
+  previousOutpoint    String?
+  newOutpoint         String
+  transactionId       String
+  blockHeight         Int?
+  confirmationStatus  ConfirmationStatus @default(UNCONFIRMED)
+  createdAt           DateTime           @default(now())
+
+  community Community    @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  nft       CommunityNFT @relation(fields: [nftId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, createdAt])
+  @@index([nftId, createdAt])
+  @@map("ownership_events")
+}
+
+model RevenuePolicy {
+  id               String   @id @default(cuid())
+  communityId      String
+  /// Must be >= 5000 bps (50%). Default is 7000 bps (70%).
+  ownerShareBps    Int      @default(7000)
+  /// Must equal 10000 - ownerShareBps. Default is 3000 bps (30%).
+  platformShareBps Int      @default(3000)
+  version          Int      @default(1)
+  effectiveAt      DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, version])
+  @@map("revenue_policies")
+}
+
+model PaymentIntent {
+  id                    String        @id @default(cuid())
+  userId                String
+  communityId           String
+  actionType            String        @default("SUBMIT_PAID_ACTIVITY")
+  totalSatoshis         Int
+  ownerSatoshis         Int
+  platformSatoshis      Int
+  ownerPayoutScript     String
+  platformPayoutScript  String
+  nftOrigin             String
+  /// Snapshot of "<currentTxid>_<currentVout>" at intent creation time.
+  /// Revenue entitlement is bound to verified ownership at intent creation
+  /// within the short expiration window; subsequent transfers apply to new intents.
+  ownerOutpointSnapshot String
+  policyVersion         Int           @default(1)
+  status                PaymentStatus @default(CREATED)
+  expiresAt             DateTime
+  createdAt             DateTime      @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  community Community @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  payment   Payment?
+
+  @@index([communityId, status])
+  @@index([userId, createdAt])
+  @@map("payment_intents")
+}
+
+model Payment {
+  id                      String        @id @default(cuid())
+  paymentIntentId         String        @unique
+  transactionId           String        @unique
+  /// Tracks settlement lifecycle: SUBMITTED -> OBSERVED (mempool/0-conf) -> CONFIRMED (passes threshold).
+  /// PaidActivity is only authorized when status reaches CONFIRMED.
+  status                  PaymentStatus @default(SUBMITTED)
+  confirmations           Int           @default(0)
+  verificationBlockHeight Int?
+  verifiedAt              DateTime?
+  isMock                  Boolean       @default(false)
+  createdAt               DateTime      @default(now())
+
+  paymentIntent PaymentIntent       @relation(fields: [paymentIntentId], references: [id], onDelete: Restrict)
+  allocations   PaymentAllocation[]
+  paidActivity  PaidActivity?
+
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id              String        @id @default(cuid())
+  paymentId       String
+  recipientType   RecipientType
+  recipientScript String
+  amountSatoshis  Int
+  outputIndex     Int
+  createdAt       DateTime      @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, outputIndex])
+  @@map("payment_allocations")
+}
+
+model PaidActivity {
+  id           String             @id @default(cuid())
+  userId       String
+  communityId  String
+  activityType String             @default("SUBMIT_PAID_ACTIVITY")
+  paymentId    String             @unique
+  status       PaidActivityStatus @default(AUTHORIZED)
+  createdAt    DateTime           @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  community Community @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  payment   Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([communityId, createdAt])
+  @@map("paid_activities")
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  eventType  String
+  entityType String
+  entityId   String
+  details    Json
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([eventType, createdAt])
+  @@map("audit_events")
+}
