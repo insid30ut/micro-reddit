@@ -18,9 +18,10 @@
    - Computes integer satoshi 70/30 splits (`ownerShareBps >= 5000`, `ownerShareBps + platformShareBps == 10000`).
    - Creates short-lived `PaymentIntent` records with an immutable ownership snapshot (`ownerOutpointSnapshot`, `ownerPayoutScript`).
    - Independently verifies submitted transactions (`SUBMITTED` -> `OBSERVED` -> `CONFIRMED`) and only authorizes `PaidActivity` once `PAYMENT_CONFIRMATIONS_REQUIRED` is satisfied.
-6. **Database (Supabase PostgreSQL + Prisma 7):**
+6. **Database (Supabase PostgreSQL + Prisma 7 — 11 Models):**
    - Configured via `prisma.config.ts` and `@prisma/adapter-pg` (`PrismaPg`).
-   - Stores indexed state, immutable `OwnershipEvent` logs, `PaymentIntent` snapshots, `Payment` records, `PaymentAllocation` outputs, and `AuditEvent` entries.
+   - Defines 11 Prisma models: `User`, `WalletConnection`, `Community`, `CommunityNFT`, `OwnershipEvent`, `RevenuePolicy`, `PaymentIntent`, `Payment`, `PaymentAllocation`, `PaidActivity`, and `AuditEvent`.
+   - Note: The initial migration (`prisma/migrations/20261115000000_init/migration.sql`) has been verified against an embedded PGlite PostgreSQL instance in automated tests, and has not yet been applied to an external PostgreSQL or Supabase instance.
 
 ## 2. Authority & Trust Boundaries
 

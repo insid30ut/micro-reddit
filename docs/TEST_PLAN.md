@@ -12,6 +12,7 @@
    - Extracts clean 25-byte P2PKH script from suffixed inscription envelope (`<P2PKH> OP_FALSE OP_IF "ord" ... OP_ENDIF`) and trailing `OP_RETURN` MAP metadata.
    - Rejects non-standard / custom / OrdLock scripts and marks `isPayoutRoutable = false`.
 3. **Database Constraint & Payment State Machine Tests (`tests/unit/database-constraints.test.ts`):**
+   - Executes the initial migration (`prisma/migrations/20261115000000_init/migration.sql`, covering all 11 Prisma models) against an embedded PGlite PostgreSQL engine. (Note: the migration has been tested with PGlite but has not yet been applied to a live PostgreSQL or Supabase instance.)
    - Verifies schema & domain constraints:
      - Optional `currentOwnerWalletConnectionId` with required on-chain `currentOwnerScript`.
      - Unique `(provider, identityKey)` on `WalletConnection`.
@@ -22,9 +23,23 @@
 4. **Environment Configuration Validation Tests (`tests/unit/env-config.test.ts`):**
    - Verifies `APP_MODE="mock"` default, basis points invariants, P2PKH script validation, and confirmation threshold validation.
 
-## Subsequent Phase Tests (Phases 2–6)
+## Phase 2 — Wallet Authentication & Multi-Provider Lifecycle Tests (Implemented)
 
-- **Phase 2:** Yours, HandCash, and Mock challenge-response authentication, nonce single-use enforcement, and expired challenge rejection.
+5. **Wallet Authentication & Multi-Provider Tests (`tests/unit/wallet-auth.test.ts`):**
+   - **Test 0:** Full `MockWalletAdapter` authentication lifecycle and `WalletConnectionStateManager` transitions (`disconnected` -> `connecting` -> `connected` -> `authenticating` -> `authenticated`).
+   - **Test 1:** Successful Yours Wallet authentication across both supported transports (BRC-100 `window.CWI` `createSignature` and injected `window.yours.signMessage` BSM).
+   - **Test 2:** Successful HandCash BRC-100 authentication (`createSignature` verification and session issuance).
+   - **Test 3:** Failed authentication rejection (wrong signing key claiming another identity's public key, and domain binding mismatch).
+   - **Test 4:** Expired authentication challenge rejection (`CHALLENGE_EXPIRED`).
+   - **Test 5:** Reused authentication challenge rejection (`CHALLENGE_REUSED` single-use replay protection).
+   - **Test 6:** Unsupported wallet operation enforcement (`sendOutputs` and `mintOrdinal` throwing `UnsupportedWalletOperationError` in Phase 2 across Mock, Yours, and HandCash adapters).
+   - **Test 7:** Wallet disconnection (adapter state cleanup, server wallet connection status update, and session revocation when the last connected wallet is disconnected).
+   - **Test 8:** Session expiration and HMAC-SHA256 tamper rejection.
+   - **Test 9:** Linking an additional wallet to an existing account (e.g., linking HandCash to an account already authenticated with Yours Wallet) and blocking unauthorized cross-account wallet claiming (`409 Conflict` `UNAUTHORIZED_WALLET_LINK`).
+   - **Test 10:** Explicit provider selection when both Yours and HandCash are available simultaneously, plus vendor version prefix mismatch protection (`PROVIDER_MISMATCH`).
+
+## Subsequent Phase Tests (Phases 3–6)
+
 - **Phase 3:** Community creation, 1Sat Ordinal minting, and origin verification.
 - **Phase 4:** Ownership indexing, transfer detection, and confirmation threshold gating.
 - **Phase 5:** End-to-end multi-output payment intent creation, transaction verification, and security rejection tests.

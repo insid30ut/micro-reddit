@@ -1,5 +1,6 @@
 import { parseAppEnv } from '@/lib/config/env';
 import { calculateRevenueAllocation } from '@/lib/payments/revenue-calculator';
+import { WalletConnectPanel } from '@/components/wallet/wallet-connect-panel';
 
 export default function HomePage() {
   const env = parseAppEnv();
@@ -20,11 +21,15 @@ export default function HomePage() {
             BSV Community NFT &amp; Micropayment PoC
           </h1>
           <p className="mt-2 text-sm text-slate-400">
-            Phase 1 Foundation — 1Sat Ordinals Ownership &amp; 70/30 Revenue
-            Routing on Bitcoin SV ({env.BSV_NETWORK}net config)
+            Phase 2 Wallet Authentication — 1Sat Ordinals Ownership &amp; 70/30
+            Revenue Routing on Bitcoin SV ({env.BSV_NETWORK}net config)
           </p>
         </div>
       </div>
+
+      <section className="mb-8">
+        <WalletConnectPanel appMode={env.APP_MODE} />
+      </section>
 
       <section className="grid gap-6 md:grid-cols-2">
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">

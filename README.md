@@ -21,7 +21,7 @@ A proof-of-concept application demonstrating that a community can be represented
    ```bash
    npm install
    ```
-3. Generate Prisma client and validate schema:
+3. Generate Prisma client and validate schema (11 database models; note: the initial SQL migration `prisma/migrations/20261115000000_init/migration.sql` is tested automatically against an embedded PGlite PostgreSQL engine during `npm test`, and has not yet been applied to an external PostgreSQL or Supabase instance):
    ```bash
    npm run db:generate
    npm run db:validate

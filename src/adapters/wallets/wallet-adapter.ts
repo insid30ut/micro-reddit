@@ -5,16 +5,18 @@ import type {
   SignatureResult,
   TransactionResult,
   WalletConnectionResult,
+  WalletErrorCode,
   WalletIdentity,
   WalletProviderType,
 } from '@/types/wallet';
 
 /**
  * Normalized WalletAdapter interface required by POC_BLUEPRINT.md Section 5.3.
- * Phase 1 defines the contract only; provider implementations are added in Phase 2.
  */
 export interface WalletAdapter {
   readonly provider: WalletProviderType;
+
+  isAvailable(): Promise<boolean>;
 
   connect(): Promise<WalletConnectionResult>;
 
@@ -31,17 +33,37 @@ export interface WalletAdapter {
   getNetwork(): Promise<'main' | 'test'>;
 }
 
-export class UnsupportedWalletOperationError extends Error {
+export class WalletConnectionError extends Error {
   public readonly provider: WalletProviderType;
+  public readonly code: WalletErrorCode;
+
+  constructor(
+    provider: WalletProviderType,
+    code: WalletErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'WalletConnectionError';
+    this.provider = provider;
+    this.code = code;
+  }
+}
+
+export class UnsupportedWalletOperationError extends WalletConnectionError {
   public readonly operation: string;
 
-  constructor(provider: WalletProviderType, operation: string, message?: string) {
+  constructor(
+    provider: WalletProviderType,
+    operation: string,
+    message?: string
+  ) {
     super(
+      provider,
+      'UNSUPPORTED_OPERATION',
       message ??
         `Operation "${operation}" is not supported by wallet provider "${provider}".`
     );
     this.name = 'UnsupportedWalletOperationError';
-    this.provider = provider;
     this.operation = operation;
   }
 }
