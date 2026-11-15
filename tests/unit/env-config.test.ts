@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   assertLiveModeAuthorized,
   DEV_DEFAULT_SESSION_SECRET,
+  LOCAL_DEV_DATABASE_URL,
   parseAppEnv,
+  resolveDatabaseUrl,
   resolveValidatedSessionSecret,
 } from '@/lib/config/env';
 
@@ -84,8 +86,36 @@ describe('Environment Configuration & Mock Mode Safeguards', () => {
       NODE_ENV: 'production',
       APP_MODE: 'live',
       NEXT_PUBLIC_APP_MODE: 'live',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app',
       SESSION_SECRET: 'a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0',
     });
     expect(prodConfig.SESSION_SECRET.length).toBeGreaterThanOrEqual(32);
+  });
+
+  it('requires explicit non-local DATABASE_URL in production/live and keeps the local fallback only for development', () => {
+    const strongSecret = 'a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0';
+
+    expect(() =>
+      parseAppEnv({ NODE_ENV: 'production', SESSION_SECRET: strongSecret })
+    ).toThrow(/DATABASE_URL must be explicitly configured/i);
+
+    expect(() =>
+      parseAppEnv({
+        NODE_ENV: 'production',
+        SESSION_SECRET: strongSecret,
+        DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/x',
+      })
+    ).toThrow(/must not point to localhost/i);
+
+    expect(() => resolveDatabaseUrl(undefined, { APP_MODE: 'live' })).toThrow(
+      /explicitly configured/i
+    );
+    expect(() => resolveDatabaseUrl(undefined, { NODE_ENV: 'production' })).toThrow(
+      /explicitly configured/i
+    );
+
+    // Development / mock mode keeps the local fallback
+    expect(resolveDatabaseUrl(undefined, {})).toBe(LOCAL_DEV_DATABASE_URL);
+    expect(parseAppEnv({}).DATABASE_URL).toBe(LOCAL_DEV_DATABASE_URL);
   });
 });

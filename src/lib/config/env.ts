@@ -44,13 +44,40 @@ export function resolveValidatedSessionSecret(
   return candidate;
 }
 
+export const LOCAL_DEV_DATABASE_URL =
+  'postgresql://postgres:postgres@localhost:5432/community_nft_poc?schema=public';
+
+/**
+ * Resolves the runtime database URL. The local development fallback is allowed only
+ * outside production/live mode; production must configure DATABASE_URL explicitly.
+ */
+export function resolveDatabaseUrl(
+  explicitUrl?: string,
+  envSource: Record<string, string | undefined> = process.env
+): string {
+  const isStrictProduction =
+    envSource.NODE_ENV === 'production' || envSource.APP_MODE === 'live';
+  const candidate = explicitUrl ?? envSource.DATABASE_URL;
+  if (candidate && candidate.trim().length > 0) {
+    if (isStrictProduction && /@(localhost|127\.0\.0\.1|\[::1\])[:/]/i.test(candidate)) {
+      throw new Error(
+        'DATABASE_URL must not point to localhost when NODE_ENV=production or APP_MODE=live.'
+      );
+    }
+    return candidate;
+  }
+  if (isStrictProduction) {
+    throw new Error(
+      'DATABASE_URL must be explicitly configured when NODE_ENV=production or APP_MODE=live (no local fallback).'
+    );
+  }
+  return LOCAL_DEV_DATABASE_URL;
+}
+
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
-    DATABASE_URL: z
-      .string()
-      .min(1, 'DATABASE_URL is required')
-      .default('postgresql://postgres:postgres@localhost:5432/community_nft_poc?schema=public'),
+    DATABASE_URL: z.string().optional(),
     DIRECT_URL: z
       .string()
       .optional(),
@@ -135,6 +162,18 @@ const rawEnvSchema = z
       env.NODE_ENV === 'production' || env.APP_MODE === 'live';
 
     if (isStrictProduction) {
+      try {
+        resolveDatabaseUrl(env.DATABASE_URL, {
+          NODE_ENV: env.NODE_ENV,
+          APP_MODE: env.APP_MODE,
+        });
+      } catch (e) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DATABASE_URL'],
+          message: e instanceof Error ? e.message : 'Invalid DATABASE_URL.',
+        });
+      }
       if (!env.SESSION_SECRET || env.SESSION_SECRET.trim().length < 32) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -163,6 +202,7 @@ const rawEnvSchema = z
   })
   .transform((env) => ({
     ...env,
+    DATABASE_URL: env.DATABASE_URL?.trim() ? env.DATABASE_URL : LOCAL_DEV_DATABASE_URL,
     SESSION_SECRET: env.SESSION_SECRET ?? DEV_DEFAULT_SESSION_SECRET,
   }));
 
