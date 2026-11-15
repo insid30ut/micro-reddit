@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { PrismaClient, AuthChallenge as PrismaAuthChallenge } from '@/generated/prisma/client';
+import { prisma } from '@/lib/database/prisma';
 import type { WalletProviderType } from '@/types/wallet';
 
 export type ChallengeErrorCode =
@@ -80,13 +82,32 @@ export function formatChallengeMessage(params: {
   return lines.join('\n');
 }
 
+function mapChallengeRow(row: PrismaAuthChallenge): AuthChallengeRecord {
+  return {
+    id: row.id,
+    nonce: row.nonce,
+    domain: row.domain,
+    provider: row.provider,
+    ...(row.sessionId ? { sessionId: row.sessionId } : {}),
+    ...(row.userId ? { userId: row.userId } : {}),
+    challengeText: row.challengeText,
+    issuedAt: row.issuedAt,
+    expiresAt: row.expiresAt,
+    ...(row.usedAt ? { usedAt: row.usedAt } : {}),
+  };
+}
+
 /**
- * Manages single-use, domain-bound, time-limited authentication challenges.
+ * Manages single-use, domain-bound, time-limited authentication challenges persisted in PostgreSQL.
  */
 export class ChallengeStore {
-  private readonly challenges = new Map<string, AuthChallengeRecord>();
+  private readonly prisma: PrismaClient;
 
-  public issueChallenge(options: CreateChallengeOptions): AuthChallengeRecord {
+  constructor(prismaClient: PrismaClient = prisma) {
+    this.prisma = prismaClient;
+  }
+
+  public async issueChallenge(options: CreateChallengeOptions): Promise<AuthChallengeRecord> {
     const issuedAt = options.now ? new Date(options.now.getTime()) : new Date();
     const ttlMs = options.ttlMs ?? DEFAULT_CHALLENGE_TTL_MS;
     const expiresAt = new Date(issuedAt.getTime() + ttlMs);
@@ -103,41 +124,46 @@ export class ChallengeStore {
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     });
 
-    const record: AuthChallengeRecord = {
-      id,
-      nonce,
-      domain: normalizedDomain,
-      provider: options.provider,
-      ...(options.sessionId ? { sessionId: options.sessionId } : {}),
-      ...(options.userId ? { userId: options.userId } : {}),
-      challengeText,
-      issuedAt,
-      expiresAt,
-    };
+    const created = await this.prisma.authChallenge.create({
+      data: {
+        id,
+        nonce,
+        domain: normalizedDomain,
+        provider: options.provider,
+        sessionId: options.sessionId ?? null,
+        userId: options.userId ?? null,
+        challengeText,
+        issuedAt,
+        expiresAt,
+      },
+    });
 
-    this.challenges.set(id, record);
-    return { ...record };
+    return mapChallengeRow(created);
   }
 
-  public getChallenge(challengeId: string): AuthChallengeRecord | undefined {
-    const record = this.challenges.get(challengeId);
-    return record ? { ...record } : undefined;
+  public async getChallenge(challengeId: string): Promise<AuthChallengeRecord | undefined> {
+    const row = await this.prisma.authChallenge.findUnique({
+      where: { id: challengeId },
+    });
+    return row ? mapChallengeRow(row) : undefined;
   }
 
   /**
    * Validates that a challenge exists, has not been used, has not expired,
    * and matches the expected domain, provider, and optional session binding.
    */
-  public validateChallenge(options: ValidateChallengeOptions): AuthChallengeRecord {
-    const record = this.challenges.get(options.challengeId);
-    if (!record) {
+  public async validateChallenge(options: ValidateChallengeOptions): Promise<AuthChallengeRecord> {
+    const row = await this.prisma.authChallenge.findUnique({
+      where: { id: options.challengeId },
+    });
+    if (!row) {
       throw new AuthChallengeError(
         'CHALLENGE_NOT_FOUND',
         `Authentication challenge '${options.challengeId}' was not found.`
       );
     }
 
-    if (record.usedAt) {
+    if (row.usedAt) {
       throw new AuthChallengeError(
         'CHALLENGE_REUSED',
         `Authentication challenge '${options.challengeId}' has already been consumed.`
@@ -145,60 +171,83 @@ export class ChallengeStore {
     }
 
     const now = options.now ?? new Date();
-    if (now.getTime() > record.expiresAt.getTime()) {
+    if (now.getTime() > row.expiresAt.getTime()) {
       throw new AuthChallengeError(
         'CHALLENGE_EXPIRED',
-        `Authentication challenge '${options.challengeId}' expired at ${record.expiresAt.toISOString()}.`
+        `Authentication challenge '${options.challengeId}' expired at ${row.expiresAt.toISOString()}.`
       );
     }
 
     const normalizedExpectedDomain = options.expectedDomain.trim().toLowerCase();
-    if (record.domain !== normalizedExpectedDomain) {
+    if (row.domain !== normalizedExpectedDomain) {
       throw new AuthChallengeError(
         'DOMAIN_MISMATCH',
-        `Authentication challenge domain mismatch: expected '${normalizedExpectedDomain}', got '${record.domain}'.`
+        `Authentication challenge domain mismatch: expected '${normalizedExpectedDomain}', got '${row.domain}'.`
       );
     }
 
-    if (options.expectedProvider && record.provider !== options.expectedProvider) {
+    if (options.expectedProvider && row.provider !== options.expectedProvider) {
       throw new AuthChallengeError(
         'PROVIDER_MISMATCH',
-        `Authentication challenge provider mismatch: expected '${options.expectedProvider}', got '${record.provider}'.`
+        `Authentication challenge provider mismatch: expected '${options.expectedProvider}', got '${row.provider}'.`
       );
     }
 
-    if (record.sessionId && record.sessionId !== options.expectedSessionId) {
+    if (row.sessionId && row.sessionId !== options.expectedSessionId) {
       throw new AuthChallengeError(
         'SESSION_MISMATCH',
         'Authentication challenge is bound to a different session.'
       );
     }
 
-    return { ...record };
+    return mapChallengeRow(row);
   }
 
   /**
-   * Marks a challenge as consumed so it can never be replayed.
+   * Atomically marks a challenge as consumed so concurrent or sequential replay attempts fail.
    */
-  public consumeChallenge(challengeId: string, now?: Date): AuthChallengeRecord {
-    const record = this.challenges.get(challengeId);
-    if (!record) {
+  public async consumeChallenge(challengeId: string, now?: Date): Promise<AuthChallengeRecord> {
+    const consumedAt = now ? new Date(now.getTime()) : new Date();
+    const updated = await this.prisma.authChallenge.updateMany({
+      where: {
+        id: challengeId,
+        usedAt: null,
+        expiresAt: { gte: consumedAt },
+      },
+      data: {
+        usedAt: consumedAt,
+      },
+    });
+
+    if (updated.count !== 1) {
+      const existing = await this.prisma.authChallenge.findUnique({
+        where: { id: challengeId },
+      });
+      if (!existing) {
+        throw new AuthChallengeError(
+          'CHALLENGE_NOT_FOUND',
+          `Authentication challenge '${challengeId}' was not found.`
+        );
+      }
+      if (existing.usedAt) {
+        throw new AuthChallengeError(
+          'CHALLENGE_REUSED',
+          `Authentication challenge '${challengeId}' has already been consumed.`
+        );
+      }
       throw new AuthChallengeError(
-        'CHALLENGE_NOT_FOUND',
-        `Authentication challenge '${challengeId}' was not found.`
+        'CHALLENGE_EXPIRED',
+        `Authentication challenge '${challengeId}' expired at ${existing.expiresAt.toISOString()}.`
       );
     }
-    if (record.usedAt) {
-      throw new AuthChallengeError(
-        'CHALLENGE_REUSED',
-        `Authentication challenge '${challengeId}' has already been consumed.`
-      );
-    }
-    record.usedAt = now ? new Date(now.getTime()) : new Date();
-    return { ...record };
+
+    const consumed = await this.prisma.authChallenge.findUniqueOrThrow({
+      where: { id: challengeId },
+    });
+    return mapChallengeRow(consumed);
   }
 
-  public clear(): void {
-    this.challenges.clear();
+  public async clear(): Promise<void> {
+    await this.prisma.authChallenge.deleteMany();
   }
 }

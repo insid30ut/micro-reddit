@@ -28,7 +28,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
       // Optional body
     }
 
-    const result = authService.disconnectWallet({
+    const result = await authService.disconnectWallet({
       sessionToken: token,
       ...(walletConnectionId ? { walletConnectionId } : {}),
     });

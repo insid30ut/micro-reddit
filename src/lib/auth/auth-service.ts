@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import {
+  Prisma,
+  type AuditEvent as PrismaAuditEvent,
+  type PrismaClient,
+  type User as PrismaUser,
+  type WalletConnection as PrismaWalletConnection,
+} from '@/generated/prisma/client';
 import type { SignatureScheme, WalletProviderType } from '@/types/wallet';
+import { prisma } from '@/lib/database/prisma';
 import {
   AuthChallengeError,
   ChallengeStore,
@@ -105,70 +113,144 @@ export interface SessionContextResult {
   wallets: WalletConnectionRecord[];
 }
 
+export interface WalletAuthServiceOptions {
+  prisma?: PrismaClient;
+  challengeStore?: ChallengeStore;
+  sessionStore?: SessionStore;
+  sessionSecret?: string;
+  envSource?: Record<string, string | undefined>;
+}
+
+function mapUserRow(row: PrismaUser): UserAccountRecord {
+  return {
+    id: row.id,
+    displayName: row.displayName,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapWalletRow(row: PrismaWalletConnection): WalletConnectionRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    provider: row.provider,
+    identityKey: row.identityKey,
+    publicKey: row.publicKey,
+    payoutScript: row.currentPayoutScript ?? '',
+    network: row.network === 'main' ? 'main' : 'test',
+    connected: row.connected,
+    lastVerifiedAt: row.lastAuthenticatedAt,
+    createdAt: row.connectedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapAuditRow(row: PrismaAuditEvent): AuditEventRecord {
+  return {
+    id: row.id,
+    eventType: row.eventType,
+    actorUserId: row.actorUserId,
+    targetType: row.entityType,
+    targetId: row.entityId,
+    payloadJson:
+      typeof row.details === 'object' &&
+      row.details !== null &&
+      !Array.isArray(row.details)
+        ? (row.details as Record<string, unknown>)
+        : {},
+    createdAt: row.createdAt,
+  };
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === 'P2002';
+  }
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return (error as { code?: unknown }).code === 'P2002';
+  }
+  return false;
+}
+
+function mapChallengeError(error: AuthChallengeError): WalletAuthError {
+  const codeMap: Record<string, WalletAuthErrorCode> = {
+    CHALLENGE_NOT_FOUND: 'INVALID_CHALLENGE',
+    CHALLENGE_EXPIRED: 'CHALLENGE_EXPIRED',
+    CHALLENGE_REUSED: 'CHALLENGE_REUSED',
+    DOMAIN_MISMATCH: 'DOMAIN_MISMATCH',
+    PROVIDER_MISMATCH: 'PROVIDER_MISMATCH',
+    SESSION_MISMATCH: 'INVALID_CHALLENGE',
+  };
+  return new WalletAuthError(
+    codeMap[error.code] ?? 'INVALID_CHALLENGE',
+    error.message,
+    401
+  );
+}
+
 /**
  * Coordinates authentication challenges, cryptographic verification,
- * account/wallet persistence, multi-wallet linking, and server sessions.
+ * PostgreSQL-backed account/wallet persistence, multi-wallet linking, and server sessions.
  */
 export class WalletAuthService {
+  private readonly prisma: PrismaClient;
   public readonly challengeStore: ChallengeStore;
   public readonly sessionStore: SessionStore;
 
-  private readonly users = new Map<string, UserAccountRecord>();
-  private readonly walletConnections = new Map<string, WalletConnectionRecord>();
-  private readonly walletIndexByProviderKey = new Map<string, string>();
-  private readonly auditEvents: AuditEventRecord[] = [];
-
-  constructor(options?: {
-    challengeStore?: ChallengeStore;
-    sessionStore?: SessionStore;
-    sessionSecret?: string;
-  }) {
-    this.challengeStore = options?.challengeStore ?? new ChallengeStore();
-    this.sessionStore = options?.sessionStore ?? new SessionStore(options?.sessionSecret);
+  constructor(options?: WalletAuthServiceOptions) {
+    this.prisma = options?.prisma ?? prisma;
+    this.challengeStore = options?.challengeStore ?? new ChallengeStore(this.prisma);
+    this.sessionStore =
+      options?.sessionStore ??
+      new SessionStore({
+        prisma: this.prisma,
+        ...(options?.sessionSecret !== undefined
+          ? { secret: options.sessionSecret }
+          : {}),
+        ...(options?.envSource ? { envSource: options.envSource } : {}),
+      });
   }
 
-  private getProviderIdentityIndexKey(provider: WalletProviderType, identityKey: string): string {
-    return `${provider}:${identityKey.trim().toLowerCase()}`;
-  }
-
-  private recordAudit(
+  private async recordAudit(
     eventType: string,
     actorUserId: string | null,
     targetType: string,
     targetId: string,
     payloadJson: Record<string, unknown>,
     now?: Date
-  ): AuditEventRecord {
-    const event: AuditEventRecord = {
-      id: randomUUID(),
-      eventType,
-      actorUserId,
-      targetType,
-      targetId,
-      payloadJson,
-      createdAt: now ? new Date(now.getTime()) : new Date(),
-    };
-    this.auditEvents.push(event);
-    return event;
+  ): Promise<AuditEventRecord> {
+    const created = await this.prisma.auditEvent.create({
+      data: {
+        id: randomUUID(),
+        eventType,
+        actorUserId,
+        entityType: targetType,
+        entityId: targetId,
+        details: payloadJson as Prisma.InputJsonValue,
+        ...(now ? { createdAt: new Date(now.getTime()) } : {}),
+      },
+    });
+    return mapAuditRow(created);
   }
 
   /**
    * Issues a new single-use authentication challenge bound to the domain, provider,
    * and (if present) the caller's active session.
    */
-  public issueChallenge(params: {
+  public async issueChallenge(params: {
     provider: WalletProviderType;
     domain: string;
     currentSessionToken?: string | null;
     ttlMs?: number;
     now?: Date;
-  }): AuthChallengeRecord {
+  }): Promise<AuthChallengeRecord> {
     let sessionId: string | undefined;
     let userId: string | undefined;
 
     if (params.currentSessionToken) {
       try {
-        const activeSession = this.sessionStore.verifySessionToken(
+        const activeSession = await this.sessionStore.verifySessionToken(
           params.currentSessionToken,
           params.now
         );
@@ -179,7 +261,7 @@ export class WalletAuthService {
       }
     }
 
-    const challenge = this.challengeStore.issueChallenge({
+    const challenge = await this.challengeStore.issueChallenge({
       provider: params.provider,
       domain: params.domain,
       ...(sessionId ? { sessionId } : {}),
@@ -188,7 +270,7 @@ export class WalletAuthService {
       ...(params.now ? { now: params.now } : {}),
     });
 
-    this.recordAudit(
+    await this.recordAudit(
       'AUTH_CHALLENGE_ISSUED',
       userId ?? null,
       'AuthChallenge',
@@ -206,8 +288,8 @@ export class WalletAuthService {
   }
 
   /**
-   * Verifies a signed authentication challenge, enforces single-use and expiration rules,
-   * prevents unauthorized cross-account wallet linking, and creates or updates a server session.
+   * Verifies a signed authentication challenge, atomically consumes it to block replay,
+   * prevents unauthorized cross-account wallet linking, and persists accounts/sessions in PostgreSQL.
    */
   public async verifyChallengeAndAuthenticate(
     input: VerifyAuthInput
@@ -218,7 +300,10 @@ export class WalletAuthService {
     let activeSession: ServerSessionRecord | undefined;
     if (input.currentSessionToken) {
       try {
-        activeSession = this.sessionStore.verifySessionToken(input.currentSessionToken, now);
+        activeSession = await this.sessionStore.verifySessionToken(
+          input.currentSessionToken,
+          now
+        );
       } catch {
         activeSession = undefined;
       }
@@ -227,7 +312,7 @@ export class WalletAuthService {
     // 1. Validate the challenge record (existence, unused, non-expired, domain, provider)
     let challenge: AuthChallengeRecord;
     try {
-      challenge = this.challengeStore.validateChallenge({
+      challenge = await this.challengeStore.validateChallenge({
         challengeId: input.challengeId,
         expectedDomain: input.expectedDomain,
         expectedProvider: input.provider,
@@ -236,7 +321,7 @@ export class WalletAuthService {
       });
     } catch (error) {
       if (error instanceof AuthChallengeError) {
-        this.recordAudit(
+        await this.recordAudit(
           'AUTH_FAILED',
           activeSession?.userId ?? null,
           'AuthChallenge',
@@ -244,19 +329,7 @@ export class WalletAuthService {
           { reason: error.code, message: error.message },
           now
         );
-        const codeMap: Record<string, WalletAuthErrorCode> = {
-          CHALLENGE_NOT_FOUND: 'INVALID_CHALLENGE',
-          CHALLENGE_EXPIRED: 'CHALLENGE_EXPIRED',
-          CHALLENGE_REUSED: 'CHALLENGE_REUSED',
-          DOMAIN_MISMATCH: 'DOMAIN_MISMATCH',
-          PROVIDER_MISMATCH: 'PROVIDER_MISMATCH',
-          SESSION_MISMATCH: 'INVALID_CHALLENGE',
-        };
-        throw new WalletAuthError(
-          codeMap[error.code] ?? 'INVALID_CHALLENGE',
-          error.message,
-          401
-        );
+        throw mapChallengeError(error);
       }
       throw error;
     }
@@ -271,7 +344,7 @@ export class WalletAuthService {
       !isValidCompressedPublicKey(normalizedPubKey) ||
       !isValidCompressedPublicKey(normalizedIdentityKey)
     ) {
-      this.recordAudit(
+      await this.recordAudit(
         'AUTH_FAILED',
         activeSession?.userId ?? null,
         'AuthChallenge',
@@ -310,7 +383,7 @@ export class WalletAuthService {
     });
 
     if (!isValidSig) {
-      this.recordAudit(
+      await this.recordAudit(
         'AUTH_FAILED',
         activeSession?.userId ?? null,
         'AuthChallenge',
@@ -330,31 +403,55 @@ export class WalletAuthService {
       );
     }
 
-    // 4. Consume the single-use challenge before mutating account state
-    this.challengeStore.consumeChallenge(challenge.id, now);
+    // 4. Atomically consume the single-use challenge before mutating account/session state
+    try {
+      await this.challengeStore.consumeChallenge(challenge.id, now);
+    } catch (error) {
+      if (error instanceof AuthChallengeError) {
+        await this.recordAudit(
+          'AUTH_FAILED',
+          activeSession?.userId ?? null,
+          'AuthChallenge',
+          challenge.id,
+          { reason: error.code, message: error.message },
+          now
+        );
+        throw mapChallengeError(error);
+      }
+      throw error;
+    }
 
-    // 5. Resolve existing wallet connection (if any)
-    const providerKey = this.getProviderIdentityIndexKey(input.provider, normalizedIdentityKey);
-    const existingConnectionId = this.walletIndexByProviderKey.get(providerKey);
-    const existingConnection = existingConnectionId
-      ? this.walletConnections.get(existingConnectionId)
-      : undefined;
+    // 5. Resolve or persist account & wallet connection in PostgreSQL
+    const existingConnection = await this.prisma.walletConnection.findUnique({
+      where: {
+        provider_identityKey: {
+          provider: input.provider,
+          identityKey: normalizedIdentityKey,
+        },
+      },
+    });
 
     const targetUserId = activeSession?.userId ?? challenge.userId;
-    let user: UserAccountRecord;
-    let walletConnection: WalletConnectionRecord;
+    let userRow: PrismaUser;
+    let walletRow: PrismaWalletConnection;
     let linkedExistingAccount = false;
 
     if (targetUserId) {
       // Caller is authenticated and linking an additional wallet (or re-verifying an existing one)
-      const currentUser = this.users.get(targetUserId);
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: targetUserId },
+      });
       if (!currentUser) {
-        throw new WalletAuthError('UNAUTHORIZED', 'Authenticated user record not found.', 401);
+        throw new WalletAuthError(
+          'UNAUTHORIZED',
+          'Authenticated user record not found.',
+          401
+        );
       }
 
       // Security requirement: Prevent unauthorized wallet linking if this wallet belongs to another user
       if (existingConnection && existingConnection.userId !== currentUser.id) {
-        this.recordAudit(
+        await this.recordAudit(
           'UNAUTHORIZED_WALLET_LINK_BLOCKED',
           currentUser.id,
           'WalletConnection',
@@ -373,86 +470,135 @@ export class WalletAuthService {
         );
       }
 
-      user = currentUser;
+      userRow = currentUser;
       linkedExistingAccount = true;
 
       if (existingConnection) {
-        existingConnection.connected = true;
-        existingConnection.lastVerifiedAt = new Date(now.getTime());
-        existingConnection.updatedAt = new Date(now.getTime());
-        walletConnection = existingConnection;
+        walletRow = await this.prisma.walletConnection.update({
+          where: { id: existingConnection.id },
+          data: {
+            connected: true,
+            publicKey: normalizedPubKey,
+            currentPayoutScript: payoutScript,
+            network: input.network ?? existingConnection.network,
+            lastAuthenticatedAt: new Date(now.getTime()),
+          },
+        });
       } else {
-        walletConnection = {
-          id: randomUUID(),
-          userId: user.id,
-          provider: input.provider,
-          identityKey: normalizedIdentityKey,
-          publicKey: normalizedPubKey,
-          payoutScript,
-          network: input.network ?? 'test',
-          connected: true,
-          lastVerifiedAt: new Date(now.getTime()),
-          createdAt: new Date(now.getTime()),
-          updatedAt: new Date(now.getTime()),
-        };
-        this.walletConnections.set(walletConnection.id, walletConnection);
-        this.walletIndexByProviderKey.set(providerKey, walletConnection.id);
+        try {
+          walletRow = await this.prisma.walletConnection.create({
+            data: {
+              id: randomUUID(),
+              userId: currentUser.id,
+              provider: input.provider,
+              identityKey: normalizedIdentityKey,
+              publicKey: normalizedPubKey,
+              currentPayoutScript: payoutScript,
+              network: input.network ?? 'test',
+              connected: true,
+              connectedAt: new Date(now.getTime()),
+              lastAuthenticatedAt: new Date(now.getTime()),
+            },
+          });
+        } catch (error) {
+          if (isUniqueConstraintError(error)) {
+            throw new WalletAuthError(
+              'UNAUTHORIZED_WALLET_LINK',
+              'This wallet is already linked to another account and cannot be claimed.',
+              409
+            );
+          }
+          throw error;
+        }
       }
 
-      this.recordAudit(
+      await this.recordAudit(
         'WALLET_LINKED',
-        user.id,
+        userRow.id,
         'WalletConnection',
-        walletConnection.id,
+        walletRow.id,
         {
-          provider: walletConnection.provider,
-          identityKey: walletConnection.identityKey,
+          provider: walletRow.provider,
+          identityKey: walletRow.identityKey,
           signatureScheme: resolvedScheme,
         },
         now
       );
     } else if (existingConnection) {
       // Returning user logging in with an existing verified wallet
-      const existingUser = this.users.get(existingConnection.userId);
+      const existingUser = await this.prisma.user.findUnique({
+        where: { id: existingConnection.userId },
+      });
       if (!existingUser) {
         throw new WalletAuthError('UNAUTHORIZED', 'User account not found.', 401);
       }
-      user = existingUser;
-      existingConnection.connected = true;
-      existingConnection.lastVerifiedAt = new Date(now.getTime());
-      existingConnection.updatedAt = new Date(now.getTime());
-      walletConnection = existingConnection;
+      userRow = existingUser;
+      walletRow = await this.prisma.walletConnection.update({
+        where: { id: existingConnection.id },
+        data: {
+          connected: true,
+          publicKey: normalizedPubKey,
+          currentPayoutScript: payoutScript,
+          network: input.network ?? existingConnection.network,
+          lastAuthenticatedAt: new Date(now.getTime()),
+        },
+      });
     } else {
-      // New user + first wallet connection
-      user = {
-        id: randomUUID(),
-        displayName:
-          input.displayName ??
-          `${input.provider}-${normalizedIdentityKey.slice(0, 8)}`,
-        createdAt: new Date(now.getTime()),
-        updatedAt: new Date(now.getTime()),
-      };
-      this.users.set(user.id, user);
+      // New user + first wallet connection created atomically
+      const displayName =
+        input.displayName?.trim() ||
+        `${input.provider}-${normalizedIdentityKey.slice(0, 8)}`;
+      const username = `${input.provider}_${normalizedIdentityKey.slice(0, 12)}_${randomUUID().slice(0, 8)}`;
 
-      walletConnection = {
-        id: randomUUID(),
-        userId: user.id,
-        provider: input.provider,
-        identityKey: normalizedIdentityKey,
-        publicKey: normalizedPubKey,
-        payoutScript,
-        network: input.network ?? 'test',
-        connected: true,
-        lastVerifiedAt: new Date(now.getTime()),
-        createdAt: new Date(now.getTime()),
-        updatedAt: new Date(now.getTime()),
-      };
-      this.walletConnections.set(walletConnection.id, walletConnection);
-      this.walletIndexByProviderKey.set(providerKey, walletConnection.id);
+      try {
+        const created = await this.prisma.$transaction(async (tx) => {
+          const newUser = await tx.user.create({
+            data: {
+              id: randomUUID(),
+              username,
+              displayName,
+              createdAt: new Date(now.getTime()),
+              updatedAt: new Date(now.getTime()),
+            },
+          });
+
+          const newWallet = await tx.walletConnection.create({
+            data: {
+              id: randomUUID(),
+              userId: newUser.id,
+              provider: input.provider,
+              identityKey: normalizedIdentityKey,
+              publicKey: normalizedPubKey,
+              currentPayoutScript: payoutScript,
+              network: input.network ?? 'test',
+              connected: true,
+              connectedAt: new Date(now.getTime()),
+              lastAuthenticatedAt: new Date(now.getTime()),
+            },
+          });
+
+          return { newUser, newWallet };
+        });
+
+        userRow = created.newUser;
+        walletRow = created.newWallet;
+      } catch (error) {
+        if (isUniqueConstraintError(error)) {
+          throw new WalletAuthError(
+            'UNAUTHORIZED_WALLET_LINK',
+            'This wallet identity is already registered.',
+            409
+          );
+        }
+        throw error;
+      }
     }
 
-    // 6. Create or update server session
-    const createdSession = this.sessionStore.createSession({
+    const user = mapUserRow(userRow);
+    const walletConnection = mapWalletRow(walletRow);
+
+    // 6. Create persistent server session (and rotate prior session if replacing)
+    const createdSession = await this.sessionStore.createSession({
       userId: user.id,
       activeWalletConnectionId: walletConnection.id,
       provider: walletConnection.provider,
@@ -462,11 +608,10 @@ export class WalletAuthService {
     });
 
     if (activeSession) {
-      // Revoke old session token after issuing replacement session with updated active wallet
-      this.sessionStore.revokeSession(activeSession.sessionId, now);
+      await this.sessionStore.revokeSession(activeSession.sessionId, now);
     }
 
-    this.recordAudit(
+    await this.recordAudit(
       'AUTH_VERIFIED',
       user.id,
       'WalletConnection',
@@ -482,9 +627,9 @@ export class WalletAuthService {
     );
 
     return {
-      user: { ...user },
-      activeWallet: { ...walletConnection },
-      wallets: this.listUserWallets(user.id),
+      user,
+      activeWallet: walletConnection,
+      wallets: await this.listUserWallets(user.id),
       session: createdSession.session,
       sessionToken: createdSession.token,
       cookie: createdSession.cookie,
@@ -493,22 +638,30 @@ export class WalletAuthService {
   }
 
   /**
-   * Resolves the authenticated session context from a session token.
+   * Resolves the authenticated session context from PostgreSQL using a session token.
    */
-  public getSessionContext(sessionToken: string | undefined | null, now?: Date): SessionContextResult {
+  public async getSessionContext(
+    sessionToken: string | undefined | null,
+    now?: Date
+  ): Promise<SessionContextResult> {
     try {
-      const session = this.sessionStore.verifySessionToken(sessionToken, now);
-      const user = this.users.get(session.userId);
-      if (!user) {
+      const session = await this.sessionStore.verifySessionToken(sessionToken, now);
+      const userRow = await this.prisma.user.findUnique({
+        where: { id: session.userId },
+      });
+      if (!userRow) {
         throw new WalletAuthError('UNAUTHORIZED', 'Authenticated user not found.', 401);
       }
-      const wallets = this.listUserWallets(user.id);
-      const activeWallet = this.walletConnections.get(session.activeWalletConnectionId);
+
+      const wallets = await this.listUserWallets(userRow.id);
+      const activeWallet = wallets.find(
+        (w) => w.id === session.activeWalletConnectionId
+      );
 
       return {
         session,
-        user: { ...user },
-        activeWallet: activeWallet ? { ...activeWallet } : undefined,
+        user: mapUserRow(userRow),
+        activeWallet,
         wallets,
       };
     } catch (error) {
@@ -522,37 +675,36 @@ export class WalletAuthService {
   /**
    * Lists all wallet connections associated with a user ID.
    */
-  public listUserWallets(userId: string): WalletConnectionRecord[] {
-    const results: WalletConnectionRecord[] = [];
-    for (const record of this.walletConnections.values()) {
-      if (record.userId === userId) {
-        results.push({ ...record });
-      }
-    }
-    return results.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  public async listUserWallets(userId: string): Promise<WalletConnectionRecord[]> {
+    const rows = await this.prisma.walletConnection.findMany({
+      where: { userId },
+      orderBy: { connectedAt: 'asc' },
+    });
+    return rows.map(mapWalletRow);
   }
 
   /**
    * Disconnects a wallet belonging to the authenticated user.
-   * If the disconnected wallet is the active wallet on the current session and no other
-   * connected wallet remains, revokes the current session.
+   * If the disconnected wallet leaves no remaining connected wallets, revokes the current session in PostgreSQL.
    */
-  public disconnectWallet(params: {
+  public async disconnectWallet(params: {
     sessionToken: string | undefined | null;
     walletConnectionId?: string;
     now?: Date;
-  }): {
+  }): Promise<{
     disconnectedWallet: WalletConnectionRecord;
     remainingConnectedWallets: WalletConnectionRecord[];
     sessionRevoked: boolean;
-  } {
+  }> {
     const now = params.now ?? new Date();
-    const context = this.getSessionContext(params.sessionToken, now);
+    const context = await this.getSessionContext(params.sessionToken, now);
     const targetWalletId =
       params.walletConnectionId ?? context.session.activeWalletConnectionId;
 
-    const wallet = this.walletConnections.get(targetWalletId);
-    if (!wallet || wallet.userId !== context.user.id) {
+    const walletRow = await this.prisma.walletConnection.findUnique({
+      where: { id: targetWalletId },
+    });
+    if (!walletRow || walletRow.userId !== context.user.id) {
       throw new WalletAuthError(
         'WALLET_NOT_FOUND',
         'Target wallet connection was not found for the authenticated user.',
@@ -560,55 +712,63 @@ export class WalletAuthService {
       );
     }
 
-    wallet.connected = false;
-    wallet.updatedAt = new Date(now.getTime());
+    const updatedWalletRow = await this.prisma.walletConnection.update({
+      where: { id: walletRow.id },
+      data: {
+        connected: false,
+      },
+    });
+    const disconnectedWallet = mapWalletRow(updatedWalletRow);
 
-    const remainingConnectedWallets = this.listUserWallets(context.user.id).filter(
-      (w) => w.connected
-    );
+    const remainingConnectedWallets = (
+      await this.listUserWallets(context.user.id)
+    ).filter((w) => w.connected);
 
     let sessionRevoked = false;
     if (remainingConnectedWallets.length === 0) {
-      this.sessionStore.revokeSession(context.session.sessionId, now);
+      await this.sessionStore.revokeSession(context.session.sessionId, now);
       sessionRevoked = true;
-    } else if (context.session.activeWalletConnectionId === wallet.id) {
+    } else if (context.session.activeWalletConnectionId === walletRow.id) {
       const fallback = remainingConnectedWallets[0]!;
-      this.sessionStore.updateActiveWallet(context.session.sessionId, {
+      await this.sessionStore.updateActiveWallet(context.session.sessionId, {
         activeWalletConnectionId: fallback.id,
         provider: fallback.provider,
         identityKey: fallback.identityKey,
       });
     }
 
-    this.recordAudit(
+    await this.recordAudit(
       'WALLET_DISCONNECTED',
       context.user.id,
       'WalletConnection',
-      wallet.id,
+      disconnectedWallet.id,
       {
-        provider: wallet.provider,
-        identityKey: wallet.identityKey,
+        provider: disconnectedWallet.provider,
+        identityKey: disconnectedWallet.identityKey,
         sessionRevoked,
       },
       now
     );
 
     return {
-      disconnectedWallet: { ...wallet },
+      disconnectedWallet,
       remainingConnectedWallets,
       sessionRevoked,
     };
   }
 
   /**
-   * Logs out and revokes the server-side session.
+   * Logs out and revokes the persistent server-side session in PostgreSQL.
    */
-  public logout(sessionToken: string | undefined | null, now?: Date): CookieOptions {
+  public async logout(
+    sessionToken: string | undefined | null,
+    now?: Date
+  ): Promise<CookieOptions> {
     if (sessionToken) {
       try {
-        const session = this.sessionStore.verifySessionToken(sessionToken, now);
-        this.sessionStore.revokeSession(session.sessionId, now);
-        this.recordAudit(
+        const session = await this.sessionStore.verifySessionToken(sessionToken, now);
+        await this.sessionStore.revokeSession(session.sessionId, now);
+        await this.recordAudit(
           'AUTH_LOGOUT',
           session.userId,
           'Session',
@@ -617,23 +777,25 @@ export class WalletAuthService {
           now
         );
       } catch {
-        this.sessionStore.revokeSession(sessionToken, now);
+        // Ignore invalid/expired tokens during logout while always clearing cookie
       }
     }
     return this.sessionStore.buildExpiredCookie();
   }
 
-  public getAuditEvents(): AuditEventRecord[] {
-    return this.auditEvents.map((e) => ({ ...e }));
+  public async getAuditEvents(): Promise<AuditEventRecord[]> {
+    const rows = await this.prisma.auditEvent.findMany({
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map(mapAuditRow);
   }
 
-  public clear(): void {
-    this.challengeStore.clear();
-    this.sessionStore.clear();
-    this.users.clear();
-    this.walletConnections.clear();
-    this.walletIndexByProviderKey.clear();
-    this.auditEvents.length = 0;
+  public async clear(): Promise<void> {
+    await this.sessionStore.clear();
+    await this.challengeStore.clear();
+    await this.prisma.auditEvent.deleteMany();
+    await this.prisma.walletConnection.deleteMany();
+    await this.prisma.user.deleteMany();
   }
 }
 

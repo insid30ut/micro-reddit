@@ -53,6 +53,8 @@ export const AnyNull = runtime.AnyNull
 export const ModelName = {
   User: 'User',
   WalletConnection: 'WalletConnection',
+  AuthChallenge: 'AuthChallenge',
+  AuthSession: 'AuthSession',
   Community: 'Community',
   CommunityNFT: 'CommunityNFT',
   OwnershipEvent: 'OwnershipEvent',
@@ -98,11 +100,44 @@ export const WalletConnectionScalarFieldEnum = {
   identityKey: 'identityKey',
   publicKey: 'publicKey',
   currentPayoutScript: 'currentPayoutScript',
+  network: 'network',
+  connected: 'connected',
   connectedAt: 'connectedAt',
-  lastAuthenticatedAt: 'lastAuthenticatedAt'
+  lastAuthenticatedAt: 'lastAuthenticatedAt',
+  updatedAt: 'updatedAt'
 } as const
 
 export type WalletConnectionScalarFieldEnum = (typeof WalletConnectionScalarFieldEnum)[keyof typeof WalletConnectionScalarFieldEnum]
+
+
+export const AuthChallengeScalarFieldEnum = {
+  id: 'id',
+  nonce: 'nonce',
+  domain: 'domain',
+  provider: 'provider',
+  sessionId: 'sessionId',
+  userId: 'userId',
+  challengeText: 'challengeText',
+  issuedAt: 'issuedAt',
+  expiresAt: 'expiresAt',
+  usedAt: 'usedAt'
+} as const
+
+export type AuthChallengeScalarFieldEnum = (typeof AuthChallengeScalarFieldEnum)[keyof typeof AuthChallengeScalarFieldEnum]
+
+
+export const AuthSessionScalarFieldEnum = {
+  sessionId: 'sessionId',
+  userId: 'userId',
+  activeWalletConnectionId: 'activeWalletConnectionId',
+  provider: 'provider',
+  identityKey: 'identityKey',
+  issuedAt: 'issuedAt',
+  expiresAt: 'expiresAt',
+  revokedAt: 'revokedAt'
+} as const
+
+export type AuthSessionScalarFieldEnum = (typeof AuthSessionScalarFieldEnum)[keyof typeof AuthSessionScalarFieldEnum]
 
 
 export const CommunityScalarFieldEnum = {
@@ -243,6 +278,7 @@ export type PaidActivityScalarFieldEnum = (typeof PaidActivityScalarFieldEnum)[k
 export const AuditEventScalarFieldEnum = {
   id: 'id',
   eventType: 'eventType',
+  actorUserId: 'actorUserId',
   entityType: 'entityType',
   entityId: 'entityId',
   details: 'details',

@@ -174,8 +174,9 @@ export class YoursWalletAdapter implements WalletAdapter {
         }
 
         const netResult = await candidateBrc100.getNetwork({});
+        const rawNet = String(netResult.network ?? '').toLowerCase();
         const network: 'main' | 'test' =
-          netResult.network === 'testnet' ? 'test' : 'main';
+          rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
         const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedPubKey);
 
         this.activeBrc100Wallet = candidateBrc100;
@@ -192,7 +193,16 @@ export class YoursWalletAdapter implements WalletAdapter {
 
         return { ...this.cachedIdentity };
       } catch (err) {
-        throw this.normalizeError(err);
+        const normalizedErr = this.normalizeError(err);
+        if (
+          this.options.brc100Wallet ||
+          normalizedErr.code !== 'WALLET_NOT_FOUND'
+        ) {
+          this.activeBrc100Wallet = null;
+          this.activeExtension = null;
+          this.cachedIdentity = null;
+          throw normalizedErr;
+        }
       }
     }
 
@@ -211,17 +221,23 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        const signingPubKey = (pubKeys.ordPubKey ?? pubKeys.bsvPubKey ?? normalizedIdentityKey)
+        // Prefer bsvPubKey (BSV payment key) for payout script derivation when exposed,
+        // while keeping identityPubKey as the verified authentication identity key.
+        const payoutCandidateKey = (
+          pubKeys.bsvPubKey ??
+          pubKeys.ordPubKey ??
+          normalizedIdentityKey
+        )
           .trim()
           .toLowerCase();
-        const payoutKey = isValidCompressedPublicKey(signingPubKey)
-          ? signingPubKey
+        const payoutKey = isValidCompressedPublicKey(payoutCandidateKey)
+          ? payoutCandidateKey
           : normalizedIdentityKey;
         const payoutScript = deriveP2PKHScriptFromPublicKey(payoutKey);
 
         let network: 'main' | 'test' = 'main';
         if (extension.getNetwork) {
-          const rawNet = await extension.getNetwork();
+          const rawNet = String(await extension.getNetwork()).toLowerCase();
           network = rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
         }
 
@@ -239,6 +255,9 @@ export class YoursWalletAdapter implements WalletAdapter {
 
         return { ...this.cachedIdentity };
       } catch (err) {
+        this.activeBrc100Wallet = null;
+        this.activeExtension = null;
+        this.cachedIdentity = null;
         throw this.normalizeError(err);
       }
     }

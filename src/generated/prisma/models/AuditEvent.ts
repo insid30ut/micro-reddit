@@ -27,6 +27,7 @@ export type AggregateAuditEvent = {
 export type AuditEventMinAggregateOutputType = {
   id: string | null
   eventType: string | null
+  actorUserId: string | null
   entityType: string | null
   entityId: string | null
   createdAt: Date | null
@@ -35,6 +36,7 @@ export type AuditEventMinAggregateOutputType = {
 export type AuditEventMaxAggregateOutputType = {
   id: string | null
   eventType: string | null
+  actorUserId: string | null
   entityType: string | null
   entityId: string | null
   createdAt: Date | null
@@ -43,6 +45,7 @@ export type AuditEventMaxAggregateOutputType = {
 export type AuditEventCountAggregateOutputType = {
   id: number
   eventType: number
+  actorUserId: number
   entityType: number
   entityId: number
   details: number
@@ -54,6 +57,7 @@ export type AuditEventCountAggregateOutputType = {
 export type AuditEventMinAggregateInputType = {
   id?: true
   eventType?: true
+  actorUserId?: true
   entityType?: true
   entityId?: true
   createdAt?: true
@@ -62,6 +66,7 @@ export type AuditEventMinAggregateInputType = {
 export type AuditEventMaxAggregateInputType = {
   id?: true
   eventType?: true
+  actorUserId?: true
   entityType?: true
   entityId?: true
   createdAt?: true
@@ -70,6 +75,7 @@ export type AuditEventMaxAggregateInputType = {
 export type AuditEventCountAggregateInputType = {
   id?: true
   eventType?: true
+  actorUserId?: true
   entityType?: true
   entityId?: true
   details?: true
@@ -152,6 +158,7 @@ export type AuditEventGroupByArgs<ExtArgs extends runtime.Types.Extensions.Inter
 export type AuditEventGroupByOutputType = {
   id: string
   eventType: string
+  actorUserId: string | null
   entityType: string
   entityId: string
   details: runtime.JsonValue
@@ -182,6 +189,7 @@ export type AuditEventWhereInput = {
   NOT?: Prisma.AuditEventWhereInput | Prisma.AuditEventWhereInput[]
   id?: Prisma.StringFilter<"AuditEvent"> | string
   eventType?: Prisma.StringFilter<"AuditEvent"> | string
+  actorUserId?: Prisma.StringNullableFilter<"AuditEvent"> | string | null
   entityType?: Prisma.StringFilter<"AuditEvent"> | string
   entityId?: Prisma.StringFilter<"AuditEvent"> | string
   details?: Prisma.JsonFilter<"AuditEvent">
@@ -191,6 +199,7 @@ export type AuditEventWhereInput = {
 export type AuditEventOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   eventType?: Prisma.SortOrder
+  actorUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   entityType?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   details?: Prisma.SortOrder
@@ -203,6 +212,7 @@ export type AuditEventWhereUniqueInput = Prisma.AtLeast<{
   OR?: Prisma.AuditEventWhereInput[]
   NOT?: Prisma.AuditEventWhereInput | Prisma.AuditEventWhereInput[]
   eventType?: Prisma.StringFilter<"AuditEvent"> | string
+  actorUserId?: Prisma.StringNullableFilter<"AuditEvent"> | string | null
   entityType?: Prisma.StringFilter<"AuditEvent"> | string
   entityId?: Prisma.StringFilter<"AuditEvent"> | string
   details?: Prisma.JsonFilter<"AuditEvent">
@@ -212,6 +222,7 @@ export type AuditEventWhereUniqueInput = Prisma.AtLeast<{
 export type AuditEventOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   eventType?: Prisma.SortOrder
+  actorUserId?: Prisma.SortOrderInput | Prisma.SortOrder
   entityType?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   details?: Prisma.SortOrder
@@ -227,6 +238,7 @@ export type AuditEventScalarWhereWithAggregatesInput = {
   NOT?: Prisma.AuditEventScalarWhereWithAggregatesInput | Prisma.AuditEventScalarWhereWithAggregatesInput[]
   id?: Prisma.StringWithAggregatesFilter<"AuditEvent"> | string
   eventType?: Prisma.StringWithAggregatesFilter<"AuditEvent"> | string
+  actorUserId?: Prisma.StringNullableWithAggregatesFilter<"AuditEvent"> | string | null
   entityType?: Prisma.StringWithAggregatesFilter<"AuditEvent"> | string
   entityId?: Prisma.StringWithAggregatesFilter<"AuditEvent"> | string
   details?: Prisma.JsonWithAggregatesFilter<"AuditEvent">
@@ -236,6 +248,7 @@ export type AuditEventScalarWhereWithAggregatesInput = {
 export type AuditEventCreateInput = {
   id?: string
   eventType: string
+  actorUserId?: string | null
   entityType: string
   entityId: string
   details: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -245,6 +258,7 @@ export type AuditEventCreateInput = {
 export type AuditEventUncheckedCreateInput = {
   id?: string
   eventType: string
+  actorUserId?: string | null
   entityType: string
   entityId: string
   details: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -254,6 +268,7 @@ export type AuditEventUncheckedCreateInput = {
 export type AuditEventUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   eventType?: Prisma.StringFieldUpdateOperationsInput | string
+  actorUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   entityType?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   details?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -263,6 +278,7 @@ export type AuditEventUpdateInput = {
 export type AuditEventUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   eventType?: Prisma.StringFieldUpdateOperationsInput | string
+  actorUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   entityType?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   details?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -272,6 +288,7 @@ export type AuditEventUncheckedUpdateInput = {
 export type AuditEventCreateManyInput = {
   id?: string
   eventType: string
+  actorUserId?: string | null
   entityType: string
   entityId: string
   details: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -281,6 +298,7 @@ export type AuditEventCreateManyInput = {
 export type AuditEventUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   eventType?: Prisma.StringFieldUpdateOperationsInput | string
+  actorUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   entityType?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   details?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -290,6 +308,7 @@ export type AuditEventUpdateManyMutationInput = {
 export type AuditEventUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   eventType?: Prisma.StringFieldUpdateOperationsInput | string
+  actorUserId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   entityType?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   details?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -299,6 +318,7 @@ export type AuditEventUncheckedUpdateManyInput = {
 export type AuditEventCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   eventType?: Prisma.SortOrder
+  actorUserId?: Prisma.SortOrder
   entityType?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   details?: Prisma.SortOrder
@@ -308,6 +328,7 @@ export type AuditEventCountOrderByAggregateInput = {
 export type AuditEventMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   eventType?: Prisma.SortOrder
+  actorUserId?: Prisma.SortOrder
   entityType?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -316,6 +337,7 @@ export type AuditEventMaxOrderByAggregateInput = {
 export type AuditEventMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   eventType?: Prisma.SortOrder
+  actorUserId?: Prisma.SortOrder
   entityType?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -326,6 +348,7 @@ export type AuditEventMinOrderByAggregateInput = {
 export type AuditEventSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   eventType?: boolean
+  actorUserId?: boolean
   entityType?: boolean
   entityId?: boolean
   details?: boolean
@@ -335,6 +358,7 @@ export type AuditEventSelect<ExtArgs extends runtime.Types.Extensions.InternalAr
 export type AuditEventSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   eventType?: boolean
+  actorUserId?: boolean
   entityType?: boolean
   entityId?: boolean
   details?: boolean
@@ -344,6 +368,7 @@ export type AuditEventSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Ex
 export type AuditEventSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   eventType?: boolean
+  actorUserId?: boolean
   entityType?: boolean
   entityId?: boolean
   details?: boolean
@@ -353,13 +378,14 @@ export type AuditEventSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Ex
 export type AuditEventSelectScalar = {
   id?: boolean
   eventType?: boolean
+  actorUserId?: boolean
   entityType?: boolean
   entityId?: boolean
   details?: boolean
   createdAt?: boolean
 }
 
-export type AuditEventOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "eventType" | "entityType" | "entityId" | "details" | "createdAt", ExtArgs["result"]["auditEvent"]>
+export type AuditEventOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "eventType" | "actorUserId" | "entityType" | "entityId" | "details" | "createdAt", ExtArgs["result"]["auditEvent"]>
 
 export type $AuditEventPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "AuditEvent"
@@ -367,6 +393,7 @@ export type $AuditEventPayload<ExtArgs extends runtime.Types.Extensions.Internal
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
     eventType: string
+    actorUserId: string | null
     entityType: string
     entityId: string
     details: runtime.JsonValue
@@ -796,6 +823,7 @@ export interface Prisma__AuditEventClient<T, Null = never, ExtArgs extends runti
 export interface AuditEventFieldRefs {
   readonly id: Prisma.FieldRef<"AuditEvent", 'String'>
   readonly eventType: Prisma.FieldRef<"AuditEvent", 'String'>
+  readonly actorUserId: Prisma.FieldRef<"AuditEvent", 'String'>
   readonly entityType: Prisma.FieldRef<"AuditEvent", 'String'>
   readonly entityId: Prisma.FieldRef<"AuditEvent", 'String'>
   readonly details: Prisma.FieldRef<"AuditEvent", 'Json'>

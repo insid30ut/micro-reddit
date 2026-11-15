@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BSM, PrivateKey, ProtoWallet, Utils, type WalletInterface } from '@bsv/sdk';
+import type { PrismaClient } from '@/generated/prisma/client';
+import { createTestPGlitePrisma } from '../helpers/pglite-prisma';
 import { MockWalletAdapter } from '../../src/adapters/wallets/mock.adapter.js';
 import {
   YoursWalletAdapter,
@@ -18,10 +20,11 @@ import {
   WalletAuthError,
   WalletAuthService,
 } from '../../src/lib/auth/auth-service.js';
+import { SessionStore } from '../../src/lib/auth/session-service.js';
 import { WalletConnectionStateManager } from '../../src/lib/auth/wallet-state.js';
 
 /**
- * Helper to build a real cryptographic BRC-100 `WalletInterface` backed by `@bsv/sdk` `ProtoWallet`
+ * Helper to build a simulated BRC-100 `WalletInterface` backed by `@bsv/sdk` `ProtoWallet`
  * with a specific vendor version string (e.g., "yours-2.4.0" or "handcash-1.2.0").
  */
 function createBRC100WalletSubstrate(params: {
@@ -71,7 +74,7 @@ function createBRC100WalletSubstrate(params: {
 }
 
 /**
- * Helper to build a real cryptographic `window.yours` injected extension mock
+ * Helper to build a simulated `window.yours` injected extension object
  * that signs messages using genuine Bitcoin Signed Message (BSM) secp256k1 signatures.
  */
 function createYoursInjectedExtension(seedLabel: string): {
@@ -132,14 +135,29 @@ function createYoursInjectedExtension(seedLabel: string): {
   };
 }
 
-describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
-  let authService: WalletAuthService;
+describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => {
   const appDomain = 'localhost:3000';
+  const testSessionSecret = 'unit-test-session-secret-minimum-32-chars-2026';
 
-  beforeEach(() => {
+  let dbHandle: Awaited<ReturnType<typeof createTestPGlitePrisma>>;
+  let prisma: PrismaClient;
+  let authService: WalletAuthService;
+
+  beforeAll(async () => {
+    dbHandle = await createTestPGlitePrisma();
+    prisma = dbHandle.prisma;
+  });
+
+  afterAll(async () => {
+    await dbHandle.close();
+  });
+
+  beforeEach(async () => {
     authService = new WalletAuthService({
-      sessionSecret: 'unit-test-session-secret-minimum-32-chars-2026',
+      prisma,
+      sessionSecret: testSessionSecret,
     });
+    await authService.clear();
   });
 
   it('0. Completes the full MockWalletAdapter authentication lifecycle and state transitions', async () => {
@@ -160,7 +178,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(identity.identityKey).toMatch(/^(02|03)[0-9a-f]{64}$/);
     expect(identity.payoutScript).toMatch(/^76a914[0-9a-f]{40}88ac$/);
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
     });
@@ -193,8 +211,8 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     ]);
   });
 
-  it('1. Succeeds with Yours Wallet authentication (both BRC-100 CWI and window.yours BSM extension)', async () => {
-    // Path A: Yours BRC-100 CWI substrate
+  it('1. Succeeds with Yours Wallet authentication (simulated BRC-100 CWI and window.yours BSM extension)', async () => {
+    // Path A: Yours BRC-100 CWI substrate (simulated via ProtoWallet)
     const yoursBrc100 = createBRC100WalletSubstrate({
       seedLabel: 'yours-brc100-user',
       version: 'yours-2.5.0',
@@ -207,7 +225,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(connA.provider).toBe('yours');
     expect(connA.identityKey).toBe(yoursBrc100.identityKeyHex);
 
-    const challengeA = authService.issueChallenge({
+    const challengeA = await authService.issueChallenge({
       provider: 'yours',
       domain: appDomain,
     });
@@ -227,7 +245,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(verifiedA.activeWallet.provider).toBe('yours');
     expect(verifiedA.activeWallet.identityKey).toBe(yoursBrc100.identityKeyHex);
 
-    // Path B: Yours injected browser extension (`window.yours.signMessage` BSM)
+    // Path B: Yours injected browser extension (`window.yours.signMessage` BSM simulation)
     const yoursExt = createYoursInjectedExtension('yours-extension-user');
     const yoursExtAdapter = new YoursWalletAdapter({
       injectedExtension: yoursExt.extension,
@@ -237,7 +255,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(connB.provider).toBe('yours');
     expect(connB.identityKey).toBe(yoursExt.identityKeyHex);
 
-    const challengeB = authService.issueChallenge({
+    const challengeB = await authService.issueChallenge({
       provider: 'yours',
       domain: appDomain,
     });
@@ -257,7 +275,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(verifiedB.activeWallet.identityKey).toBe(yoursExt.identityKeyHex);
   });
 
-  it('2. Succeeds with HandCash BRC-100 authentication', async () => {
+  it('2. Succeeds with HandCash BRC-100 authentication (simulated substrate)', async () => {
     const handcashSub = createBRC100WalletSubstrate({
       seedLabel: 'handcash-brc100-user',
       version: 'handcash-1.4.2',
@@ -271,7 +289,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(conn.identityKey).toBe(handcashSub.identityKeyHex);
     expect(conn.version).toBe('handcash-1.4.2');
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'handcash',
       domain: appDomain,
     });
@@ -301,7 +319,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     const aliceConn = await aliceAdapter.connect();
     await attackerAdapter.connect();
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
     });
@@ -341,7 +359,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     const conn = await adapter.connect();
 
     const issuedAt = new Date('2026-11-15T00:00:00.000Z');
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
       ttlMs: 60_000, // 1 minute TTL
@@ -371,7 +389,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     const adapter = new MockWalletAdapter({ persona: 'alice' });
     const conn = await adapter.connect();
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
     });
@@ -458,13 +476,13 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     }
   });
 
-  it('7. Handles wallet disconnection cleanly on both adapter and server session', async () => {
+  it('7. Handles wallet disconnection cleanly on both adapter and persistent server session', async () => {
     const adapter = new MockWalletAdapter({ persona: 'alice' });
     const conn = await adapter.connect();
     const identityBefore = await adapter.getIdentity();
     expect(identityBefore.identityKey).toBe(conn.identityKey);
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
     });
@@ -485,16 +503,16 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     await expect(adapter.getIdentity()).rejects.toThrowError(WalletConnectionError);
 
     // Disconnect server wallet connection -> revokes session since it was the only wallet
-    const disconnectRes = authService.disconnectWallet({
+    const disconnectRes = await authService.disconnectWallet({
       sessionToken: verified.sessionToken,
     });
     expect(disconnectRes.disconnectedWallet.connected).toBe(false);
     expect(disconnectRes.sessionRevoked).toBe(true);
 
     // Subsequent session check fails
-    expect(() =>
+    await expect(
       authService.getSessionContext(verified.sessionToken)
-    ).toThrowError(WalletAuthError);
+    ).rejects.toThrowError(WalletAuthError);
   });
 
   it('8. Enforces server-side session expiration and rejects tampered session tokens', async () => {
@@ -502,7 +520,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     const conn = await adapter.connect();
 
     const startTime = new Date('2026-11-15T12:00:00.000Z');
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
       now: startTime,
@@ -523,7 +541,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
 
     // Valid after 10 minutes
     const tenMinutesLater = new Date('2026-11-15T12:10:00.000Z');
-    const context = authService.getSessionContext(
+    const context = await authService.getSessionContext(
       verified.sessionToken,
       tenMinutesLater
     );
@@ -531,15 +549,15 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
 
     // Expired after 31 minutes
     const thirtyOneMinutesLater = new Date('2026-11-15T12:31:00.000Z');
-    expect(() =>
+    await expect(
       authService.getSessionContext(verified.sessionToken, thirtyOneMinutesLater)
-    ).toThrowError(/expired/i);
+    ).rejects.toThrowError(/expired/i);
 
     // Tampered HMAC signature is rejected immediately
     const tamperedToken = `${verified.session.sessionId}.${'0'.repeat(64)}`;
-    expect(() =>
+    await expect(
       authService.getSessionContext(tamperedToken, tenMinutesLater)
-    ).toThrowError(/HMAC signature verification failed/i);
+    ).rejects.toThrowError(/HMAC signature verification failed/i);
   });
 
   it('9. Links an additional wallet to an existing account and blocks unauthorized cross-account wallet claiming', async () => {
@@ -553,7 +571,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     });
     const aliceYoursConn = await aliceYoursAdapter.connect();
 
-    const challenge1 = authService.issueChallenge({
+    const challenge1 = await authService.issueChallenge({
       provider: 'yours',
       domain: appDomain,
     });
@@ -580,7 +598,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     });
     const aliceHandCashConn = await aliceHandCashAdapter.connect();
 
-    const challenge2 = authService.issueChallenge({
+    const challenge2 = await authService.issueChallenge({
       provider: 'handcash',
       domain: appDomain,
       currentSessionToken: aliceAuth1.sessionToken,
@@ -606,7 +624,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     // Now Bob creates a separate account and tries to link Alice's Yours wallet to Bob's account -> MUST FAIL
     const bobMockAdapter = new MockWalletAdapter({ persona: 'bob' });
     const bobConn = await bobMockAdapter.connect();
-    const bobChallenge1 = authService.issueChallenge({
+    const bobChallenge1 = await authService.issueChallenge({
       provider: 'mock',
       domain: appDomain,
     });
@@ -623,7 +641,7 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     expect(bobAuth.user.id).not.toBe(aliceAuth1.user.id);
 
     // Bob attempts to link Alice's already-linked Yours wallet to Bob's session
-    const bobLinkChallenge = authService.issueChallenge({
+    const bobLinkChallenge = await authService.issueChallenge({
       provider: 'yours',
       domain: appDomain,
       currentSessionToken: bobAuth.sessionToken,
@@ -639,7 +657,9 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
         publicKey: stolenOrSignedByAlice.publicKey,
         identityKey: aliceYoursConn.identityKey,
         signature: stolenOrSignedByAlice.signature,
-        ...(stolenOrSignedByAlice.keyID ? { keyID: stolenOrSignedByAlice.keyID } : {}),
+        ...(stolenOrSignedByAlice.keyID
+          ? { keyID: stolenOrSignedByAlice.keyID }
+          : {}),
         expectedDomain: appDomain,
         currentSessionToken: bobAuth.sessionToken,
       });
@@ -704,5 +724,247 @@ describe('Phase 2 — Wallet Authentication & Multi-Provider Lifecycle', () => {
     await expect(mismatchedYours.connect()).rejects.toMatchObject({
       code: 'PROVIDER_MISMATCH',
     });
+  });
+
+  it('11. Persists users, wallets, challenges, sessions, and audit events in PostgreSQL and enforces DB-level unique wallet identities', async () => {
+    const adapter = new MockWalletAdapter({ persona: 'alice', network: 'test' });
+    const conn = await adapter.connect();
+
+    const challenge = await authService.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const sig = await adapter.signChallenge(challenge.challengeText);
+    const verified = await authService.verifyChallengeAndAuthenticate({
+      challengeId: challenge.id,
+      provider: 'mock',
+      publicKey: sig.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig.signature,
+      ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      network: 'test',
+      expectedDomain: appDomain,
+    });
+
+    // Verify PostgreSQL tables directly via Prisma
+    const dbUser = await prisma.user.findUnique({ where: { id: verified.user.id } });
+    const dbWallet = await prisma.walletConnection.findUnique({
+      where: {
+        provider_identityKey: {
+          provider: 'mock',
+          identityKey: conn.identityKey,
+        },
+      },
+    });
+    const dbChallenge = await prisma.authChallenge.findUnique({
+      where: { id: challenge.id },
+    });
+    const dbSession = await prisma.authSession.findUnique({
+      where: { sessionId: verified.session.sessionId },
+    });
+    const auditEvents = await authService.getAuditEvents();
+
+    expect(dbUser?.id).toBe(verified.user.id);
+    expect(dbWallet?.id).toBe(verified.activeWallet.id);
+    expect(dbWallet?.connected).toBe(true);
+    expect(dbChallenge?.usedAt).toBeInstanceOf(Date);
+    expect(dbSession?.userId).toBe(verified.user.id);
+    expect(auditEvents.map((e) => e.eventType)).toEqual([
+      'AUTH_CHALLENGE_ISSUED',
+      'AUTH_VERIFIED',
+    ]);
+
+    // DB-level unique constraint on (provider, identityKey) rejects direct duplicate insert
+    const secondUser = await prisma.user.create({
+      data: {
+        username: 'second_user_db_check',
+        displayName: 'Second User',
+      },
+    });
+    await expect(
+      prisma.walletConnection.create({
+        data: {
+          userId: secondUser.id,
+          provider: 'mock',
+          identityKey: conn.identityKey,
+          publicKey: conn.publicKey,
+          currentPayoutScript: conn.payoutScript ?? '',
+        },
+      })
+    ).rejects.toThrow();
+  });
+
+  it('12. Prevents concurrent challenge replay atomically when two verification requests race simultaneously', async () => {
+    const adapter = new MockWalletAdapter({ persona: 'alice' });
+    const conn = await adapter.connect();
+
+    const challenge = await authService.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const sig = await adapter.signChallenge(challenge.challengeText);
+
+    const instanceA = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+    });
+    const instanceB = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+    });
+
+    const payload = {
+      challengeId: challenge.id,
+      provider: 'mock' as const,
+      publicKey: conn.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig.signature,
+      ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      expectedDomain: appDomain,
+    };
+
+    const [resA, resB] = await Promise.allSettled([
+      instanceA.verifyChallengeAndAuthenticate(payload),
+      instanceB.verifyChallengeAndAuthenticate(payload),
+    ]);
+
+    const fulfilled = [resA, resB].filter((r) => r.status === 'fulfilled');
+    const rejected = [resA, resB].filter(
+      (r): r is PromiseRejectedResult => r.status === 'rejected'
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(WalletAuthError);
+    expect((rejected[0]!.reason as WalletAuthError).code).toBe('CHALLENGE_REUSED');
+  });
+
+  it('13. Shares session state and propagates logout/disconnect revocation across separate WalletAuthService instances', async () => {
+    const adapter = new MockWalletAdapter({ persona: 'bob' });
+    const conn = await adapter.connect();
+
+    const instanceA = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+    });
+    const instanceB = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+    });
+
+    const challenge = await instanceA.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const sig = await adapter.signChallenge(challenge.challengeText);
+    const verified = await instanceA.verifyChallengeAndAuthenticate({
+      challengeId: challenge.id,
+      provider: 'mock',
+      publicKey: conn.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig.signature,
+      ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+
+    // Separate instanceB immediately resolves session issued by instanceA from PostgreSQL
+    const ctxB = await instanceB.getSessionContext(verified.sessionToken);
+    expect(ctxB.user.id).toBe(verified.user.id);
+    expect(ctxB.activeWallet?.identityKey).toBe(conn.identityKey);
+
+    // instanceA logs out -> revokes persistent session in PostgreSQL
+    await instanceA.logout(verified.sessionToken);
+
+    // instanceB immediately rejects revoked session
+    await expect(
+      instanceB.getSessionContext(verified.sessionToken)
+    ).rejects.toThrowError(/revoked/i);
+
+    // Also verify disconnectWallet on instanceA revokes across instanceB
+    const challenge2 = await instanceA.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const sig2 = await adapter.signChallenge(challenge2.challengeText);
+    const verified2 = await instanceA.verifyChallengeAndAuthenticate({
+      challengeId: challenge2.id,
+      provider: 'mock',
+      publicKey: conn.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig2.signature,
+      ...(sig2.keyID ? { keyID: sig2.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+
+    const disconnectResult = await instanceA.disconnectWallet({
+      sessionToken: verified2.sessionToken,
+    });
+    expect(disconnectResult.sessionRevoked).toBe(true);
+
+    await expect(
+      instanceB.getSessionContext(verified2.sessionToken)
+    ).rejects.toThrowError(/revoked/i);
+  });
+
+  it('14. Enforces production SESSION_SECRET requirements and Secure cookie flags in SessionStore', async () => {
+    expect(
+      () =>
+        new SessionStore({
+          prisma,
+          envSource: { NODE_ENV: 'production' },
+        })
+    ).toThrow(/SESSION_SECRET/i);
+
+    expect(
+      () =>
+        new SessionStore({
+          prisma,
+          secret: 'too-short',
+          envSource: { NODE_ENV: 'production' },
+        })
+    ).toThrow(/at least 32 characters/i);
+
+    expect(
+      () =>
+        new SessionStore({
+          prisma,
+          secret: 'development-only-session-secret-change-in-production-32chars',
+          envSource: { NODE_ENV: 'production' },
+        })
+    ).toThrow(/placeholder/i);
+
+    // Strong secret in production produces Secure + HttpOnly + SameSite=lax cookies
+    const adapter = new MockWalletAdapter({ persona: 'alice' });
+    const conn = await adapter.connect();
+    const prodService = new WalletAuthService({
+      prisma,
+      sessionSecret: 'prod-9f8e7d6c5b4a3928172635445566778899aabbccddeeff',
+      envSource: { NODE_ENV: 'production', APP_MODE: 'live' },
+    });
+
+    const challenge = await prodService.issueChallenge({
+      provider: 'mock',
+      domain: appDomain,
+    });
+    const sig = await adapter.signChallenge(challenge.challengeText);
+    const authRes = await prodService.verifyChallengeAndAuthenticate({
+      challengeId: challenge.id,
+      provider: 'mock',
+      publicKey: sig.publicKey,
+      identityKey: conn.identityKey,
+      signature: sig.signature,
+      ...(sig.keyID ? { keyID: sig.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+
+    expect(authRes.cookie.httpOnly).toBe(true);
+    expect(authRes.cookie.sameSite).toBe('lax');
+    expect(authRes.cookie.path).toBe('/');
+    expect(authRes.cookie.secure).toBe(true);
+
+    const expiredCookie = prodService.sessionStore.buildExpiredCookie();
+    expect(expiredCookie.secure).toBe(true);
+    expect(expiredCookie.httpOnly).toBe(true);
+    expect(expiredCookie.maxAge).toBe(0);
   });
 });

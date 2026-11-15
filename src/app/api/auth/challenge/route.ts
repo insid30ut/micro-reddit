@@ -29,7 +29,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const currentSessionToken = getSessionTokenFromRequest(request);
     const authService = getWalletAuthService();
 
-    const challenge = authService.issueChallenge({
+    const challenge = await authService.issueChallenge({
       provider: parsed.data.provider,
       domain,
       currentSessionToken: currentSessionToken ?? null,

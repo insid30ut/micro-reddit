@@ -52,6 +52,16 @@ export type User = Prisma.UserModel
  */
 export type WalletConnection = Prisma.WalletConnectionModel
 /**
+ * Model AuthChallenge
+ * 
+ */
+export type AuthChallenge = Prisma.AuthChallengeModel
+/**
+ * Model AuthSession
+ * 
+ */
+export type AuthSession = Prisma.AuthSessionModel
+/**
  * Model Community
  * 
  */

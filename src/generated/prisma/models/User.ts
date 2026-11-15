@@ -183,6 +183,7 @@ export type UserWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"User"> | Date | string
   walletConnections?: Prisma.WalletConnectionListRelationFilter
+  authSessions?: Prisma.AuthSessionListRelationFilter
   createdCommunities?: Prisma.CommunityListRelationFilter
   paymentIntents?: Prisma.PaymentIntentListRelationFilter
   paidActivities?: Prisma.PaidActivityListRelationFilter
@@ -195,6 +196,7 @@ export type UserOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   walletConnections?: Prisma.WalletConnectionOrderByRelationAggregateInput
+  authSessions?: Prisma.AuthSessionOrderByRelationAggregateInput
   createdCommunities?: Prisma.CommunityOrderByRelationAggregateInput
   paymentIntents?: Prisma.PaymentIntentOrderByRelationAggregateInput
   paidActivities?: Prisma.PaidActivityOrderByRelationAggregateInput
@@ -210,6 +212,7 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   createdAt?: Prisma.DateTimeFilter<"User"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"User"> | Date | string
   walletConnections?: Prisma.WalletConnectionListRelationFilter
+  authSessions?: Prisma.AuthSessionListRelationFilter
   createdCommunities?: Prisma.CommunityListRelationFilter
   paymentIntents?: Prisma.PaymentIntentListRelationFilter
   paidActivities?: Prisma.PaidActivityListRelationFilter
@@ -244,6 +247,7 @@ export type UserCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityCreateNestedManyWithoutUserInput
@@ -256,6 +260,7 @@ export type UserUncheckedCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentUncheckedCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityUncheckedCreateNestedManyWithoutUserInput
@@ -268,6 +273,7 @@ export type UserUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUpdateManyWithoutUserNestedInput
@@ -280,6 +286,7 @@ export type UserUncheckedUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUncheckedUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUncheckedUpdateManyWithoutUserNestedInput
@@ -360,6 +367,20 @@ export type UserUpdateOneRequiredWithoutWalletConnectionsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutWalletConnectionsInput, Prisma.UserUpdateWithoutWalletConnectionsInput>, Prisma.UserUncheckedUpdateWithoutWalletConnectionsInput>
 }
 
+export type UserCreateNestedOneWithoutAuthSessionsInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutAuthSessionsInput, Prisma.UserUncheckedCreateWithoutAuthSessionsInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutAuthSessionsInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutAuthSessionsNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutAuthSessionsInput, Prisma.UserUncheckedCreateWithoutAuthSessionsInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutAuthSessionsInput
+  upsert?: Prisma.UserUpsertWithoutAuthSessionsInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutAuthSessionsInput, Prisma.UserUpdateWithoutAuthSessionsInput>, Prisma.UserUncheckedUpdateWithoutAuthSessionsInput>
+}
+
 export type UserCreateNestedOneWithoutCreatedCommunitiesInput = {
   create?: Prisma.XOR<Prisma.UserCreateWithoutCreatedCommunitiesInput, Prisma.UserUncheckedCreateWithoutCreatedCommunitiesInput>
   connectOrCreate?: Prisma.UserCreateOrConnectWithoutCreatedCommunitiesInput
@@ -408,6 +429,7 @@ export type UserCreateWithoutWalletConnectionsInput = {
   displayName: string
   createdAt?: Date | string
   updatedAt?: Date | string
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityCreateNestedManyWithoutUserInput
@@ -419,6 +441,7 @@ export type UserUncheckedCreateWithoutWalletConnectionsInput = {
   displayName: string
   createdAt?: Date | string
   updatedAt?: Date | string
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentUncheckedCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityUncheckedCreateNestedManyWithoutUserInput
@@ -446,6 +469,7 @@ export type UserUpdateWithoutWalletConnectionsInput = {
   displayName?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUpdateManyWithoutUserNestedInput
@@ -457,6 +481,71 @@ export type UserUncheckedUpdateWithoutWalletConnectionsInput = {
   displayName?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
+  createdCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutOriginalCreatorNestedInput
+  paymentIntents?: Prisma.PaymentIntentUncheckedUpdateManyWithoutUserNestedInput
+  paidActivities?: Prisma.PaidActivityUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutAuthSessionsInput = {
+  id?: string
+  username: string
+  displayName: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  walletConnections?: Prisma.WalletConnectionCreateNestedManyWithoutUserInput
+  createdCommunities?: Prisma.CommunityCreateNestedManyWithoutOriginalCreatorInput
+  paymentIntents?: Prisma.PaymentIntentCreateNestedManyWithoutUserInput
+  paidActivities?: Prisma.PaidActivityCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutAuthSessionsInput = {
+  id?: string
+  username: string
+  displayName: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  walletConnections?: Prisma.WalletConnectionUncheckedCreateNestedManyWithoutUserInput
+  createdCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutOriginalCreatorInput
+  paymentIntents?: Prisma.PaymentIntentUncheckedCreateNestedManyWithoutUserInput
+  paidActivities?: Prisma.PaidActivityUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutAuthSessionsInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutAuthSessionsInput, Prisma.UserUncheckedCreateWithoutAuthSessionsInput>
+}
+
+export type UserUpsertWithoutAuthSessionsInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutAuthSessionsInput, Prisma.UserUncheckedUpdateWithoutAuthSessionsInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutAuthSessionsInput, Prisma.UserUncheckedCreateWithoutAuthSessionsInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutAuthSessionsInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutAuthSessionsInput, Prisma.UserUncheckedUpdateWithoutAuthSessionsInput>
+}
+
+export type UserUpdateWithoutAuthSessionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  displayName?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  walletConnections?: Prisma.WalletConnectionUpdateManyWithoutUserNestedInput
+  createdCommunities?: Prisma.CommunityUpdateManyWithoutOriginalCreatorNestedInput
+  paymentIntents?: Prisma.PaymentIntentUpdateManyWithoutUserNestedInput
+  paidActivities?: Prisma.PaidActivityUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutAuthSessionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  displayName?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  walletConnections?: Prisma.WalletConnectionUncheckedUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUncheckedUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUncheckedUpdateManyWithoutUserNestedInput
@@ -469,6 +558,7 @@ export type UserCreateWithoutCreatedCommunitiesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
   paymentIntents?: Prisma.PaymentIntentCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityCreateNestedManyWithoutUserInput
 }
@@ -480,6 +570,7 @@ export type UserUncheckedCreateWithoutCreatedCommunitiesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
   paymentIntents?: Prisma.PaymentIntentUncheckedCreateNestedManyWithoutUserInput
   paidActivities?: Prisma.PaidActivityUncheckedCreateNestedManyWithoutUserInput
 }
@@ -507,6 +598,7 @@ export type UserUpdateWithoutCreatedCommunitiesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
   paymentIntents?: Prisma.PaymentIntentUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUpdateManyWithoutUserNestedInput
 }
@@ -518,6 +610,7 @@ export type UserUncheckedUpdateWithoutCreatedCommunitiesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
   paymentIntents?: Prisma.PaymentIntentUncheckedUpdateManyWithoutUserNestedInput
   paidActivities?: Prisma.PaidActivityUncheckedUpdateManyWithoutUserNestedInput
 }
@@ -529,6 +622,7 @@ export type UserCreateWithoutPaymentIntentsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityCreateNestedManyWithoutOriginalCreatorInput
   paidActivities?: Prisma.PaidActivityCreateNestedManyWithoutUserInput
 }
@@ -540,6 +634,7 @@ export type UserUncheckedCreateWithoutPaymentIntentsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutOriginalCreatorInput
   paidActivities?: Prisma.PaidActivityUncheckedCreateNestedManyWithoutUserInput
 }
@@ -567,6 +662,7 @@ export type UserUpdateWithoutPaymentIntentsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUpdateManyWithoutOriginalCreatorNestedInput
   paidActivities?: Prisma.PaidActivityUpdateManyWithoutUserNestedInput
 }
@@ -578,6 +674,7 @@ export type UserUncheckedUpdateWithoutPaymentIntentsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutOriginalCreatorNestedInput
   paidActivities?: Prisma.PaidActivityUncheckedUpdateManyWithoutUserNestedInput
 }
@@ -589,6 +686,7 @@ export type UserCreateWithoutPaidActivitiesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentCreateNestedManyWithoutUserInput
 }
@@ -600,6 +698,7 @@ export type UserUncheckedCreateWithoutPaidActivitiesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedCreateNestedManyWithoutUserInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
   createdCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutOriginalCreatorInput
   paymentIntents?: Prisma.PaymentIntentUncheckedCreateNestedManyWithoutUserInput
 }
@@ -627,6 +726,7 @@ export type UserUpdateWithoutPaidActivitiesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUpdateManyWithoutUserNestedInput
 }
@@ -638,6 +738,7 @@ export type UserUncheckedUpdateWithoutPaidActivitiesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   walletConnections?: Prisma.WalletConnectionUncheckedUpdateManyWithoutUserNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
   createdCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutOriginalCreatorNestedInput
   paymentIntents?: Prisma.PaymentIntentUncheckedUpdateManyWithoutUserNestedInput
 }
@@ -649,6 +750,7 @@ export type UserUncheckedUpdateWithoutPaidActivitiesInput = {
 
 export type UserCountOutputType = {
   walletConnections: number
+  authSessions: number
   createdCommunities: number
   paymentIntents: number
   paidActivities: number
@@ -656,6 +758,7 @@ export type UserCountOutputType = {
 
 export type UserCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   walletConnections?: boolean | UserCountOutputTypeCountWalletConnectionsArgs
+  authSessions?: boolean | UserCountOutputTypeCountAuthSessionsArgs
   createdCommunities?: boolean | UserCountOutputTypeCountCreatedCommunitiesArgs
   paymentIntents?: boolean | UserCountOutputTypeCountPaymentIntentsArgs
   paidActivities?: boolean | UserCountOutputTypeCountPaidActivitiesArgs
@@ -676,6 +779,13 @@ export type UserCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Extensi
  */
 export type UserCountOutputTypeCountWalletConnectionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.WalletConnectionWhereInput
+}
+
+/**
+ * UserCountOutputType without action
+ */
+export type UserCountOutputTypeCountAuthSessionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.AuthSessionWhereInput
 }
 
 /**
@@ -707,6 +817,7 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   createdAt?: boolean
   updatedAt?: boolean
   walletConnections?: boolean | Prisma.User$walletConnectionsArgs<ExtArgs>
+  authSessions?: boolean | Prisma.User$authSessionsArgs<ExtArgs>
   createdCommunities?: boolean | Prisma.User$createdCommunitiesArgs<ExtArgs>
   paymentIntents?: boolean | Prisma.User$paymentIntentsArgs<ExtArgs>
   paidActivities?: boolean | Prisma.User$paidActivitiesArgs<ExtArgs>
@@ -740,6 +851,7 @@ export type UserSelectScalar = {
 export type UserOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "username" | "displayName" | "createdAt" | "updatedAt", ExtArgs["result"]["user"]>
 export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   walletConnections?: boolean | Prisma.User$walletConnectionsArgs<ExtArgs>
+  authSessions?: boolean | Prisma.User$authSessionsArgs<ExtArgs>
   createdCommunities?: boolean | Prisma.User$createdCommunitiesArgs<ExtArgs>
   paymentIntents?: boolean | Prisma.User$paymentIntentsArgs<ExtArgs>
   paidActivities?: boolean | Prisma.User$paidActivitiesArgs<ExtArgs>
@@ -752,6 +864,7 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   name: "User"
   objects: {
     walletConnections: Prisma.$WalletConnectionPayload<ExtArgs>[]
+    authSessions: Prisma.$AuthSessionPayload<ExtArgs>[]
     createdCommunities: Prisma.$CommunityPayload<ExtArgs>[]
     paymentIntents: Prisma.$PaymentIntentPayload<ExtArgs>[]
     paidActivities: Prisma.$PaidActivityPayload<ExtArgs>[]
@@ -1157,6 +1270,7 @@ readonly fields: UserFieldRefs;
 export interface Prisma__UserClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
   walletConnections<T extends Prisma.User$walletConnectionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$walletConnectionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$WalletConnectionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  authSessions<T extends Prisma.User$authSessionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$authSessionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$AuthSessionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   createdCommunities<T extends Prisma.User$createdCommunitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$createdCommunitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CommunityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   paymentIntents<T extends Prisma.User$paymentIntentsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$paymentIntentsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PaymentIntentPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   paidActivities<T extends Prisma.User$paidActivitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$paidActivitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PaidActivityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -1608,6 +1722,30 @@ export type User$walletConnectionsArgs<ExtArgs extends runtime.Types.Extensions.
   take?: number
   skip?: number
   distinct?: Prisma.WalletConnectionScalarFieldEnum | Prisma.WalletConnectionScalarFieldEnum[]
+}
+
+/**
+ * User.authSessions
+ */
+export type User$authSessionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the AuthSession
+   */
+  select?: Prisma.AuthSessionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the AuthSession
+   */
+  omit?: Prisma.AuthSessionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.AuthSessionInclude<ExtArgs> | null
+  where?: Prisma.AuthSessionWhereInput
+  orderBy?: Prisma.AuthSessionOrderByWithRelationInput | Prisma.AuthSessionOrderByWithRelationInput[]
+  cursor?: Prisma.AuthSessionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.AuthSessionScalarFieldEnum | Prisma.AuthSessionScalarFieldEnum[]
 }
 
 /**

@@ -1,4 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import type { PrismaClient, AuthSession as PrismaAuthSession } from '@/generated/prisma/client';
+import { resolveValidatedSessionSecret } from '@/lib/config/env';
+import { prisma } from '@/lib/database/prisma';
 import type { WalletProviderType } from '@/types/wallet';
 
 export const SESSION_COOKIE_NAME = 'poc_session';
@@ -52,49 +55,69 @@ export interface CookieOptions {
   expires: Date;
 }
 
+function mapSessionRow(row: PrismaAuthSession): ServerSessionRecord {
+  return {
+    sessionId: row.sessionId,
+    userId: row.userId,
+    activeWalletConnectionId: row.activeWalletConnectionId,
+    provider: row.provider,
+    identityKey: row.identityKey,
+    issuedAt: row.issuedAt,
+    expiresAt: row.expiresAt,
+    ...(row.revokedAt ? { revokedAt: row.revokedAt } : {}),
+  };
+}
+
+export interface SessionStoreOptions {
+  secret?: string;
+  prisma?: PrismaClient;
+  envSource?: Record<string, string | undefined>;
+}
+
 /**
- * Server-side session manager with HMAC-SHA256 signed tokens and expiration enforcement.
+ * Persistent server-side session manager backed by PostgreSQL (`auth_sessions`)
+ * with HMAC-SHA256 signed tokens, strict secret validation, and expiration/revocation enforcement.
  */
 export class SessionStore {
-  private readonly sessions = new Map<string, ServerSessionRecord>();
+  private readonly prisma: PrismaClient;
   private readonly secret: string;
+  private readonly isSecureCookie: boolean;
 
-  constructor(secret?: string) {
-    const resolvedSecret =
-      secret ??
-      process.env.SESSION_SECRET ??
-      'dev-mock-mode-session-secret-minimum-32-characters-long';
-    if (resolvedSecret.length < 32) {
-      throw new Error('SESSION_SECRET must be at least 32 characters long.');
-    }
-    this.secret = resolvedSecret;
+  constructor(options?: string | SessionStoreOptions) {
+    const opts: SessionStoreOptions =
+      typeof options === 'string' ? { secret: options } : (options ?? {});
+    const envSource = opts.envSource ?? process.env;
+    this.secret = resolveValidatedSessionSecret(opts.secret, envSource);
+    this.prisma = opts.prisma ?? prisma;
+    this.isSecureCookie =
+      envSource.NODE_ENV === 'production' || envSource.APP_MODE === 'live';
   }
 
   private signSessionId(sessionId: string): string {
     return createHmac('sha256', this.secret).update(sessionId).digest('hex');
   }
 
-  public createSession(options: CreateSessionOptions): {
+  public async createSession(options: CreateSessionOptions): Promise<{
     token: string;
     session: ServerSessionRecord;
     cookie: CookieOptions;
-  } {
+  }> {
     const issuedAt = options.now ? new Date(options.now.getTime()) : new Date();
     const ttlMs = options.ttlMs ?? DEFAULT_SESSION_TTL_MS;
     const expiresAt = new Date(issuedAt.getTime() + ttlMs);
     const sessionId = randomUUID();
 
-    const record: ServerSessionRecord = {
-      sessionId,
-      userId: options.userId,
-      activeWalletConnectionId: options.activeWalletConnectionId,
-      provider: options.provider,
-      identityKey: options.identityKey,
-      issuedAt,
-      expiresAt,
-    };
-
-    this.sessions.set(sessionId, record);
+    const created = await this.prisma.authSession.create({
+      data: {
+        sessionId,
+        userId: options.userId,
+        activeWalletConnectionId: options.activeWalletConnectionId,
+        provider: options.provider,
+        identityKey: options.identityKey,
+        issuedAt,
+        expiresAt,
+      },
+    });
 
     const signature = this.signSessionId(sessionId);
     const token = `${sessionId}.${signature}`;
@@ -102,14 +125,14 @@ export class SessionStore {
 
     return {
       token,
-      session: { ...record },
+      session: mapSessionRow(created),
       cookie: {
         name: SESSION_COOKIE_NAME,
         value: token,
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: this.isSecureCookie,
         maxAge: maxAgeSeconds,
         expires: expiresAt,
       },
@@ -117,9 +140,12 @@ export class SessionStore {
   }
 
   /**
-   * Verifies a signed session token and returns the active server-side session record.
+   * Verifies a signed session token and returns the active server-side session record from PostgreSQL.
    */
-  public verifySessionToken(token: string | undefined | null, now?: Date): ServerSessionRecord {
+  public async verifySessionToken(
+    token: string | undefined | null,
+    now?: Date
+  ): Promise<ServerSessionRecord> {
     if (!token || typeof token !== 'string' || !token.includes('.')) {
       throw new AuthSessionError('SESSION_MISSING', 'Missing or malformed session token.');
     }
@@ -144,7 +170,9 @@ export class SessionStore {
       );
     }
 
-    const record = this.sessions.get(sessionId);
+    const record = await this.prisma.authSession.findUnique({
+      where: { sessionId },
+    });
     if (!record) {
       throw new AuthSessionError('SESSION_NOT_FOUND', 'Server session was not found.');
     }
@@ -161,53 +189,76 @@ export class SessionStore {
       );
     }
 
-    return { ...record };
+    return mapSessionRow(record);
   }
 
   /**
    * Updates the active wallet connection on an existing session (e.g., when linking an additional wallet).
    */
-  public updateActiveWallet(
+  public async updateActiveWallet(
     sessionId: string,
     update: {
       activeWalletConnectionId: string;
       provider: WalletProviderType;
       identityKey: string;
     }
-  ): ServerSessionRecord {
-    const record = this.sessions.get(sessionId);
-    if (!record) {
+  ): Promise<ServerSessionRecord> {
+    const existing = await this.prisma.authSession.findUnique({
+      where: { sessionId },
+    });
+    if (!existing) {
       throw new AuthSessionError('SESSION_NOT_FOUND', 'Server session was not found.');
     }
-    record.activeWalletConnectionId = update.activeWalletConnectionId;
-    record.provider = update.provider;
-    record.identityKey = update.identityKey;
-    return { ...record };
+    const updated = await this.prisma.authSession.update({
+      where: { sessionId },
+      data: {
+        activeWalletConnectionId: update.activeWalletConnectionId,
+        provider: update.provider,
+        identityKey: update.identityKey,
+      },
+    });
+    return mapSessionRow(updated);
   }
 
   /**
-   * Revokes a session by token or session ID.
+   * Revokes a session in PostgreSQL by token or session ID.
    */
-  public revokeSession(tokenOrSessionId: string, now?: Date): void {
+  public async revokeSession(tokenOrSessionId: string, now?: Date): Promise<void> {
     const sessionId = tokenOrSessionId.includes('.')
       ? tokenOrSessionId.split('.')[0] ?? tokenOrSessionId
       : tokenOrSessionId;
-    const record = this.sessions.get(sessionId);
-    if (record && !record.revokedAt) {
-      record.revokedAt = now ? new Date(now.getTime()) : new Date();
+    if (!sessionId) {
+      return;
     }
+    const revokedAt = now ? new Date(now.getTime()) : new Date();
+    await this.prisma.authSession.updateMany({
+      where: {
+        sessionId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt,
+      },
+    });
   }
 
   /**
    * Revokes all active sessions associated with a specific walletConnectionId.
    */
-  public revokeSessionsByWalletConnection(walletConnectionId: string, now?: Date): void {
-    const revokedTime = now ? new Date(now.getTime()) : new Date();
-    for (const record of this.sessions.values()) {
-      if (record.activeWalletConnectionId === walletConnectionId && !record.revokedAt) {
-        record.revokedAt = revokedTime;
-      }
-    }
+  public async revokeSessionsByWalletConnection(
+    walletConnectionId: string,
+    now?: Date
+  ): Promise<void> {
+    const revokedAt = now ? new Date(now.getTime()) : new Date();
+    await this.prisma.authSession.updateMany({
+      where: {
+        activeWalletConnectionId: walletConnectionId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt,
+      },
+    });
   }
 
   public buildExpiredCookie(): CookieOptions {
@@ -217,13 +268,13 @@ export class SessionStore {
       httpOnly: true,
       sameSite: 'lax',
       path: '/',
-      secure: process.env.NODE_ENV === 'production',
+      secure: this.isSecureCookie,
       maxAge: 0,
       expires: new Date(0),
     };
   }
 
-  public clear(): void {
-    this.sessions.clear();
+  public async clear(): Promise<void> {
+    await this.prisma.authSession.deleteMany();
   }
 }

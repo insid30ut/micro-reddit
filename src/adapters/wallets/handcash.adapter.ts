@@ -104,8 +104,9 @@ export class HandCashWalletAdapter implements WalletAdapter {
       }
 
       const netResult = await candidate.getNetwork({});
+      const rawNet = String(netResult.network ?? '').toLowerCase();
       const network: 'main' | 'test' =
-        netResult.network === 'testnet' ? 'test' : 'main';
+        rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
       const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedPubKey);
 
       this.activeWallet = candidate;
@@ -121,6 +122,8 @@ export class HandCashWalletAdapter implements WalletAdapter {
 
       return { ...this.cachedIdentity };
     } catch (err) {
+      this.activeWallet = null;
+      this.cachedIdentity = null;
       throw this.normalizeError(err);
     }
   }

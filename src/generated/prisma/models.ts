@@ -10,6 +10,8 @@
  */
 export type * from './models/User'
 export type * from './models/WalletConnection'
+export type * from './models/AuthChallenge'
+export type * from './models/AuthSession'
 export type * from './models/Community'
 export type * from './models/CommunityNFT'
 export type * from './models/OwnershipEvent'

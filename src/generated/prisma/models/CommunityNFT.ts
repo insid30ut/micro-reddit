@@ -734,20 +734,12 @@ export type IntFieldUpdateOperationsInput = {
   divide?: number
 }
 
-export type BoolFieldUpdateOperationsInput = {
-  set?: boolean
-}
-
 export type NullableIntFieldUpdateOperationsInput = {
   set?: number | null
   increment?: number
   decrement?: number
   multiply?: number
   divide?: number
-}
-
-export type NullableDateTimeFieldUpdateOperationsInput = {
-  set?: Date | string | null
 }
 
 export type EnumConfirmationStatusFieldUpdateOperationsInput = {
@@ -1144,7 +1136,7 @@ export type $CommunityNFTPayload<ExtArgs extends runtime.Types.Extensions.Intern
      */
     rawOutputScript: string | null
     /**
-     * Classified script type: "P2PKH" | "ORDLOCK" | "NON_STANDARD"
+     * Classified script type: "UNVERIFIED" | "P2PKH" | "ORDLOCK" | "NON_STANDARD"
      */
     scriptType: string
     /**

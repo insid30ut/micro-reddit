@@ -10,7 +10,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const authService = getWalletAuthService();
 
   try {
-    const context = authService.getSessionContext(token);
+    const context = await authService.getSessionContext(token);
     return NextResponse.json({
       authenticated: true,
       user: {

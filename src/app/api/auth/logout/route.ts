@@ -8,7 +8,7 @@ import {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const token = getSessionTokenFromRequest(request);
   const authService = getWalletAuthService();
-  const expiredCookie = authService.logout(token);
+  const expiredCookie = await authService.logout(token);
 
   const response = NextResponse.json({
     authenticated: false,

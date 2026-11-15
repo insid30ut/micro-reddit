@@ -1,8 +1,52 @@
 import { z } from 'zod';
 import { isStandardP2PKHScript } from '@/lib/ordinals/script-parser';
 
+export const DEV_DEFAULT_SESSION_SECRET =
+  'development-only-session-secret-change-in-production-32chars';
+
+export const DEV_PLACEHOLDER_SESSION_SECRETS = new Set<string>([
+  DEV_DEFAULT_SESSION_SECRET,
+  'dev-mock-mode-session-secret-minimum-32-characters-long',
+]);
+
+/**
+ * Resolves and validates the server session signing secret.
+ * Never allows missing, weak (< 32 chars), or placeholder secrets in production or live mode.
+ */
+export function resolveValidatedSessionSecret(
+  explicitSecret?: string,
+  envSource: Record<string, string | undefined> = process.env
+): string {
+  const isStrictProduction =
+    envSource.NODE_ENV === 'production' || envSource.APP_MODE === 'live';
+  const candidate =
+    explicitSecret !== undefined ? explicitSecret : envSource.SESSION_SECRET;
+
+  if (candidate === undefined) {
+    if (isStrictProduction) {
+      throw new Error(
+        'SESSION_SECRET must be explicitly configured (minimum 32 characters) when NODE_ENV=production or APP_MODE=live.'
+      );
+    }
+    return DEV_DEFAULT_SESSION_SECRET;
+  }
+
+  if (candidate.trim().length < 32) {
+    throw new Error('SESSION_SECRET must be at least 32 characters long.');
+  }
+
+  if (isStrictProduction && DEV_PLACEHOLDER_SESSION_SECRETS.has(candidate)) {
+    throw new Error(
+      'SESSION_SECRET must not use a development placeholder value when NODE_ENV=production or APP_MODE=live.'
+    );
+  }
+
+  return candidate;
+}
+
 const rawEnvSchema = z
   .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
     DATABASE_URL: z
       .string()
       .min(1, 'DATABASE_URL is required')
@@ -69,10 +113,7 @@ const rawEnvSchema = z
       .string()
       .url('ONESAT_API_BASE_URL must be a valid URL')
       .default('https://api.1sat.app'),
-    SESSION_SECRET: z
-      .string()
-      .min(32, 'SESSION_SECRET must be at least 32 characters long')
-      .default('development-only-session-secret-change-in-production-32chars'),
+    SESSION_SECRET: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     if (env.OWNER_SHARE_BPS + env.PLATFORM_SHARE_BPS !== 10000) {
@@ -89,7 +130,41 @@ const rawEnvSchema = z
         message: `APP_MODE ("${env.APP_MODE}") and NEXT_PUBLIC_APP_MODE ("${env.NEXT_PUBLIC_APP_MODE}") must match.`,
       });
     }
-  });
+
+    const isStrictProduction =
+      env.NODE_ENV === 'production' || env.APP_MODE === 'live';
+
+    if (isStrictProduction) {
+      if (!env.SESSION_SECRET || env.SESSION_SECRET.trim().length < 32) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SESSION_SECRET'],
+          message:
+            'SESSION_SECRET is required and must be at least 32 characters long when NODE_ENV=production or APP_MODE=live.',
+        });
+      } else if (DEV_PLACEHOLDER_SESSION_SECRETS.has(env.SESSION_SECRET)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SESSION_SECRET'],
+          message:
+            'SESSION_SECRET cannot use a development placeholder value when NODE_ENV=production or APP_MODE=live.',
+        });
+      }
+    } else if (
+      env.SESSION_SECRET !== undefined &&
+      env.SESSION_SECRET.trim().length < 32
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SESSION_SECRET'],
+        message: 'SESSION_SECRET must be at least 32 characters long.',
+      });
+    }
+  })
+  .transform((env) => ({
+    ...env,
+    SESSION_SECRET: env.SESSION_SECRET ?? DEV_DEFAULT_SESSION_SECRET,
+  }));
 
 export type AppEnvConfig = z.infer<typeof rawEnvSchema>;
 

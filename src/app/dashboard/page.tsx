@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   let sessionContext = null;
   if (sessionToken) {
     try {
-      sessionContext = authService.getSessionContext(sessionToken);
+      sessionContext = await authService.getSessionContext(sessionToken);
     } catch {
       sessionContext = null;
     }

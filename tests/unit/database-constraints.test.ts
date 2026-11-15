@@ -1,7 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadOrderedMigrationSqlFiles } from '../helpers/pglite-prisma';
 
 const ALICE_SCRIPT = '76a914111111111111111111111111111111111111111188ac';
 const BOB_UNREGISTERED_SCRIPT =
@@ -19,14 +18,9 @@ describe('PostgreSQL Migration & Database Schema Constraints', () => {
 
   beforeAll(async () => {
     db = new PGlite();
-    const migrationPath = path.resolve(
-      process.cwd(),
-      'prisma/migrations/20261115000000_init/migration.sql'
-    );
-    const migrationSql = fs
-      .readFileSync(migrationPath, 'utf8')
-      .replace(/^\uFEFF/, '');
-    await db.exec(migrationSql);
+    for (const migrationSql of loadOrderedMigrationSqlFiles()) {
+      await db.exec(migrationSql);
+    }
   });
 
   afterAll(async () => {
@@ -209,6 +203,37 @@ describe('PostgreSQL Migration & Database Schema Constraints', () => {
       db.query(
         `INSERT INTO "payments" ("id", "paymentIntentId", "transactionId", "status", "confirmations")
          VALUES ('pay_dup_intent', 'intent_1', 'tx_payment_002', 'CONFIRMED', 1);`
+      )
+    ).rejects.toThrow();
+  });
+
+  it('enforces fail-closed security defaults on CommunityNFT, PaidActivity, and unique WalletConnection identities', async () => {
+    // 1. Regression check: inspecting CommunityNFT defaults from previous insert (`nft_1`)
+    const nftDefaults = await db.query<{
+      scriptType: string;
+      isPayoutRoutable: boolean;
+    }>(
+      `SELECT "scriptType", "isPayoutRoutable" FROM "community_nfts" WHERE "id" = 'nft_1';`
+    );
+    expect(nftDefaults.rows[0]?.scriptType).toBe('UNVERIFIED');
+    expect(nftDefaults.rows[0]?.isPayoutRoutable).toBe(false);
+
+    // 2. Regression check: PaidActivity defaults to PENDING_CONFIRMATION (never AUTHORIZED)
+    await db.query(
+      `INSERT INTO "paid_activities" ("id", "userId", "communityId", "activityType", "paymentId")
+       VALUES ('pa_default_check', 'user_payer', 'comm_tech', 'SUBMIT_PAID_ACTIVITY', 'pay_1');`
+    );
+    const paRes = await db.query<{ status: string }>(
+      `SELECT "status" FROM "paid_activities" WHERE "id" = 'pa_default_check';`
+    );
+    expect(paRes.rows[0]?.status).toBe('PENDING_CONFIRMATION');
+
+    // 3. Regression check: Duplicate (provider, identityKey) wallet identity is rejected at DB level
+    await expect(
+      db.query(
+        `INSERT INTO "wallet_connections" ("id", "userId", "provider", "identityKey", "publicKey", "currentPayoutScript")
+         VALUES ('wc_dup_alice', 'user_payer', 'yours', '02aliceidentity', '02alicepub', $1);`,
+        [BOB_UNREGISTERED_SCRIPT]
       )
     ).rejects.toThrow();
   });

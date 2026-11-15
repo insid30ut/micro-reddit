@@ -31,8 +31,11 @@ export type WalletConnectionMinAggregateOutputType = {
   identityKey: string | null
   publicKey: string | null
   currentPayoutScript: string | null
+  network: string | null
+  connected: boolean | null
   connectedAt: Date | null
   lastAuthenticatedAt: Date | null
+  updatedAt: Date | null
 }
 
 export type WalletConnectionMaxAggregateOutputType = {
@@ -42,8 +45,11 @@ export type WalletConnectionMaxAggregateOutputType = {
   identityKey: string | null
   publicKey: string | null
   currentPayoutScript: string | null
+  network: string | null
+  connected: boolean | null
   connectedAt: Date | null
   lastAuthenticatedAt: Date | null
+  updatedAt: Date | null
 }
 
 export type WalletConnectionCountAggregateOutputType = {
@@ -53,8 +59,11 @@ export type WalletConnectionCountAggregateOutputType = {
   identityKey: number
   publicKey: number
   currentPayoutScript: number
+  network: number
+  connected: number
   connectedAt: number
   lastAuthenticatedAt: number
+  updatedAt: number
   _all: number
 }
 
@@ -66,8 +75,11 @@ export type WalletConnectionMinAggregateInputType = {
   identityKey?: true
   publicKey?: true
   currentPayoutScript?: true
+  network?: true
+  connected?: true
   connectedAt?: true
   lastAuthenticatedAt?: true
+  updatedAt?: true
 }
 
 export type WalletConnectionMaxAggregateInputType = {
@@ -77,8 +89,11 @@ export type WalletConnectionMaxAggregateInputType = {
   identityKey?: true
   publicKey?: true
   currentPayoutScript?: true
+  network?: true
+  connected?: true
   connectedAt?: true
   lastAuthenticatedAt?: true
+  updatedAt?: true
 }
 
 export type WalletConnectionCountAggregateInputType = {
@@ -88,8 +103,11 @@ export type WalletConnectionCountAggregateInputType = {
   identityKey?: true
   publicKey?: true
   currentPayoutScript?: true
+  network?: true
+  connected?: true
   connectedAt?: true
   lastAuthenticatedAt?: true
+  updatedAt?: true
   _all?: true
 }
 
@@ -172,8 +190,11 @@ export type WalletConnectionGroupByOutputType = {
   identityKey: string
   publicKey: string
   currentPayoutScript: string | null
+  network: string
+  connected: boolean
   connectedAt: Date
   lastAuthenticatedAt: Date
+  updatedAt: Date
   _count: WalletConnectionCountAggregateOutputType | null
   _min: WalletConnectionMinAggregateOutputType | null
   _max: WalletConnectionMaxAggregateOutputType | null
@@ -204,10 +225,14 @@ export type WalletConnectionWhereInput = {
   identityKey?: Prisma.StringFilter<"WalletConnection"> | string
   publicKey?: Prisma.StringFilter<"WalletConnection"> | string
   currentPayoutScript?: Prisma.StringNullableFilter<"WalletConnection"> | string | null
+  network?: Prisma.StringFilter<"WalletConnection"> | string
+  connected?: Prisma.BoolFilter<"WalletConnection"> | boolean
   connectedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
+  updatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   ownedCommunities?: Prisma.CommunityListRelationFilter
+  authSessions?: Prisma.AuthSessionListRelationFilter
 }
 
 export type WalletConnectionOrderByWithRelationInput = {
@@ -217,10 +242,14 @@ export type WalletConnectionOrderByWithRelationInput = {
   identityKey?: Prisma.SortOrder
   publicKey?: Prisma.SortOrder
   currentPayoutScript?: Prisma.SortOrderInput | Prisma.SortOrder
+  network?: Prisma.SortOrder
+  connected?: Prisma.SortOrder
   connectedAt?: Prisma.SortOrder
   lastAuthenticatedAt?: Prisma.SortOrder
+  updatedAt?: Prisma.SortOrder
   user?: Prisma.UserOrderByWithRelationInput
   ownedCommunities?: Prisma.CommunityOrderByRelationAggregateInput
+  authSessions?: Prisma.AuthSessionOrderByRelationAggregateInput
 }
 
 export type WalletConnectionWhereUniqueInput = Prisma.AtLeast<{
@@ -234,10 +263,14 @@ export type WalletConnectionWhereUniqueInput = Prisma.AtLeast<{
   identityKey?: Prisma.StringFilter<"WalletConnection"> | string
   publicKey?: Prisma.StringFilter<"WalletConnection"> | string
   currentPayoutScript?: Prisma.StringNullableFilter<"WalletConnection"> | string | null
+  network?: Prisma.StringFilter<"WalletConnection"> | string
+  connected?: Prisma.BoolFilter<"WalletConnection"> | boolean
   connectedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
+  updatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   ownedCommunities?: Prisma.CommunityListRelationFilter
+  authSessions?: Prisma.AuthSessionListRelationFilter
 }, "id" | "provider_identityKey">
 
 export type WalletConnectionOrderByWithAggregationInput = {
@@ -247,8 +280,11 @@ export type WalletConnectionOrderByWithAggregationInput = {
   identityKey?: Prisma.SortOrder
   publicKey?: Prisma.SortOrder
   currentPayoutScript?: Prisma.SortOrderInput | Prisma.SortOrder
+  network?: Prisma.SortOrder
+  connected?: Prisma.SortOrder
   connectedAt?: Prisma.SortOrder
   lastAuthenticatedAt?: Prisma.SortOrder
+  updatedAt?: Prisma.SortOrder
   _count?: Prisma.WalletConnectionCountOrderByAggregateInput
   _max?: Prisma.WalletConnectionMaxOrderByAggregateInput
   _min?: Prisma.WalletConnectionMinOrderByAggregateInput
@@ -264,8 +300,11 @@ export type WalletConnectionScalarWhereWithAggregatesInput = {
   identityKey?: Prisma.StringWithAggregatesFilter<"WalletConnection"> | string
   publicKey?: Prisma.StringWithAggregatesFilter<"WalletConnection"> | string
   currentPayoutScript?: Prisma.StringNullableWithAggregatesFilter<"WalletConnection"> | string | null
+  network?: Prisma.StringWithAggregatesFilter<"WalletConnection"> | string
+  connected?: Prisma.BoolWithAggregatesFilter<"WalletConnection"> | boolean
   connectedAt?: Prisma.DateTimeWithAggregatesFilter<"WalletConnection"> | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeWithAggregatesFilter<"WalletConnection"> | Date | string
+  updatedAt?: Prisma.DateTimeWithAggregatesFilter<"WalletConnection"> | Date | string
 }
 
 export type WalletConnectionCreateInput = {
@@ -274,10 +313,14 @@ export type WalletConnectionCreateInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutWalletConnectionsInput
   ownedCommunities?: Prisma.CommunityCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionUncheckedCreateInput = {
@@ -287,9 +330,13 @@ export type WalletConnectionUncheckedCreateInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
   ownedCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionUpdateInput = {
@@ -298,10 +345,14 @@ export type WalletConnectionUpdateInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneRequiredWithoutWalletConnectionsNestedInput
   ownedCommunities?: Prisma.CommunityUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionUncheckedUpdateInput = {
@@ -311,9 +362,13 @@ export type WalletConnectionUncheckedUpdateInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   ownedCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionCreateManyInput = {
@@ -323,8 +378,11 @@ export type WalletConnectionCreateManyInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
 }
 
 export type WalletConnectionUpdateManyMutationInput = {
@@ -333,8 +391,11 @@ export type WalletConnectionUpdateManyMutationInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type WalletConnectionUncheckedUpdateManyInput = {
@@ -344,8 +405,11 @@ export type WalletConnectionUncheckedUpdateManyInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type WalletConnectionListRelationFilter = {
@@ -370,8 +434,11 @@ export type WalletConnectionCountOrderByAggregateInput = {
   identityKey?: Prisma.SortOrder
   publicKey?: Prisma.SortOrder
   currentPayoutScript?: Prisma.SortOrder
+  network?: Prisma.SortOrder
+  connected?: Prisma.SortOrder
   connectedAt?: Prisma.SortOrder
   lastAuthenticatedAt?: Prisma.SortOrder
+  updatedAt?: Prisma.SortOrder
 }
 
 export type WalletConnectionMaxOrderByAggregateInput = {
@@ -381,8 +448,11 @@ export type WalletConnectionMaxOrderByAggregateInput = {
   identityKey?: Prisma.SortOrder
   publicKey?: Prisma.SortOrder
   currentPayoutScript?: Prisma.SortOrder
+  network?: Prisma.SortOrder
+  connected?: Prisma.SortOrder
   connectedAt?: Prisma.SortOrder
   lastAuthenticatedAt?: Prisma.SortOrder
+  updatedAt?: Prisma.SortOrder
 }
 
 export type WalletConnectionMinOrderByAggregateInput = {
@@ -392,8 +462,16 @@ export type WalletConnectionMinOrderByAggregateInput = {
   identityKey?: Prisma.SortOrder
   publicKey?: Prisma.SortOrder
   currentPayoutScript?: Prisma.SortOrder
+  network?: Prisma.SortOrder
+  connected?: Prisma.SortOrder
   connectedAt?: Prisma.SortOrder
   lastAuthenticatedAt?: Prisma.SortOrder
+  updatedAt?: Prisma.SortOrder
+}
+
+export type WalletConnectionScalarRelationFilter = {
+  is?: Prisma.WalletConnectionWhereInput
+  isNot?: Prisma.WalletConnectionWhereInput
 }
 
 export type WalletConnectionNullableScalarRelationFilter = {
@@ -451,6 +529,24 @@ export type NullableStringFieldUpdateOperationsInput = {
   set?: string | null
 }
 
+export type BoolFieldUpdateOperationsInput = {
+  set?: boolean
+}
+
+export type WalletConnectionCreateNestedOneWithoutAuthSessionsInput = {
+  create?: Prisma.XOR<Prisma.WalletConnectionCreateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedCreateWithoutAuthSessionsInput>
+  connectOrCreate?: Prisma.WalletConnectionCreateOrConnectWithoutAuthSessionsInput
+  connect?: Prisma.WalletConnectionWhereUniqueInput
+}
+
+export type WalletConnectionUpdateOneRequiredWithoutAuthSessionsNestedInput = {
+  create?: Prisma.XOR<Prisma.WalletConnectionCreateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedCreateWithoutAuthSessionsInput>
+  connectOrCreate?: Prisma.WalletConnectionCreateOrConnectWithoutAuthSessionsInput
+  upsert?: Prisma.WalletConnectionUpsertWithoutAuthSessionsInput
+  connect?: Prisma.WalletConnectionWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.WalletConnectionUpdateToOneWithWhereWithoutAuthSessionsInput, Prisma.WalletConnectionUpdateWithoutAuthSessionsInput>, Prisma.WalletConnectionUncheckedUpdateWithoutAuthSessionsInput>
+}
+
 export type WalletConnectionCreateNestedOneWithoutOwnedCommunitiesInput = {
   create?: Prisma.XOR<Prisma.WalletConnectionCreateWithoutOwnedCommunitiesInput, Prisma.WalletConnectionUncheckedCreateWithoutOwnedCommunitiesInput>
   connectOrCreate?: Prisma.WalletConnectionCreateOrConnectWithoutOwnedCommunitiesInput
@@ -473,9 +569,13 @@ export type WalletConnectionCreateWithoutUserInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
   ownedCommunities?: Prisma.CommunityCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionUncheckedCreateWithoutUserInput = {
@@ -484,9 +584,13 @@ export type WalletConnectionUncheckedCreateWithoutUserInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
   ownedCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionCreateOrConnectWithoutUserInput = {
@@ -525,8 +629,87 @@ export type WalletConnectionScalarWhereInput = {
   identityKey?: Prisma.StringFilter<"WalletConnection"> | string
   publicKey?: Prisma.StringFilter<"WalletConnection"> | string
   currentPayoutScript?: Prisma.StringNullableFilter<"WalletConnection"> | string | null
+  network?: Prisma.StringFilter<"WalletConnection"> | string
+  connected?: Prisma.BoolFilter<"WalletConnection"> | boolean
   connectedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
+  updatedAt?: Prisma.DateTimeFilter<"WalletConnection"> | Date | string
+}
+
+export type WalletConnectionCreateWithoutAuthSessionsInput = {
+  id?: string
+  provider: $Enums.WalletProvider
+  identityKey: string
+  publicKey: string
+  currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
+  connectedAt?: Date | string
+  lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
+  user: Prisma.UserCreateNestedOneWithoutWalletConnectionsInput
+  ownedCommunities?: Prisma.CommunityCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+}
+
+export type WalletConnectionUncheckedCreateWithoutAuthSessionsInput = {
+  id?: string
+  userId: string
+  provider: $Enums.WalletProvider
+  identityKey: string
+  publicKey: string
+  currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
+  connectedAt?: Date | string
+  lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
+  ownedCommunities?: Prisma.CommunityUncheckedCreateNestedManyWithoutCurrentOwnerWalletConnectionInput
+}
+
+export type WalletConnectionCreateOrConnectWithoutAuthSessionsInput = {
+  where: Prisma.WalletConnectionWhereUniqueInput
+  create: Prisma.XOR<Prisma.WalletConnectionCreateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedCreateWithoutAuthSessionsInput>
+}
+
+export type WalletConnectionUpsertWithoutAuthSessionsInput = {
+  update: Prisma.XOR<Prisma.WalletConnectionUpdateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedUpdateWithoutAuthSessionsInput>
+  create: Prisma.XOR<Prisma.WalletConnectionCreateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedCreateWithoutAuthSessionsInput>
+  where?: Prisma.WalletConnectionWhereInput
+}
+
+export type WalletConnectionUpdateToOneWithWhereWithoutAuthSessionsInput = {
+  where?: Prisma.WalletConnectionWhereInput
+  data: Prisma.XOR<Prisma.WalletConnectionUpdateWithoutAuthSessionsInput, Prisma.WalletConnectionUncheckedUpdateWithoutAuthSessionsInput>
+}
+
+export type WalletConnectionUpdateWithoutAuthSessionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  provider?: Prisma.EnumWalletProviderFieldUpdateOperationsInput | $Enums.WalletProvider
+  identityKey?: Prisma.StringFieldUpdateOperationsInput | string
+  publicKey?: Prisma.StringFieldUpdateOperationsInput | string
+  currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  user?: Prisma.UserUpdateOneRequiredWithoutWalletConnectionsNestedInput
+  ownedCommunities?: Prisma.CommunityUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
+}
+
+export type WalletConnectionUncheckedUpdateWithoutAuthSessionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  provider?: Prisma.EnumWalletProviderFieldUpdateOperationsInput | $Enums.WalletProvider
+  identityKey?: Prisma.StringFieldUpdateOperationsInput | string
+  publicKey?: Prisma.StringFieldUpdateOperationsInput | string
+  currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  ownedCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
 }
 
 export type WalletConnectionCreateWithoutOwnedCommunitiesInput = {
@@ -535,9 +718,13 @@ export type WalletConnectionCreateWithoutOwnedCommunitiesInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
   user: Prisma.UserCreateNestedOneWithoutWalletConnectionsInput
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionUncheckedCreateWithoutOwnedCommunitiesInput = {
@@ -547,8 +734,12 @@ export type WalletConnectionUncheckedCreateWithoutOwnedCommunitiesInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutActiveWalletConnectionInput
 }
 
 export type WalletConnectionCreateOrConnectWithoutOwnedCommunitiesInput = {
@@ -573,9 +764,13 @@ export type WalletConnectionUpdateWithoutOwnedCommunitiesInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   user?: Prisma.UserUpdateOneRequiredWithoutWalletConnectionsNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionUncheckedUpdateWithoutOwnedCommunitiesInput = {
@@ -585,8 +780,12 @@ export type WalletConnectionUncheckedUpdateWithoutOwnedCommunitiesInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionCreateManyUserInput = {
@@ -595,8 +794,11 @@ export type WalletConnectionCreateManyUserInput = {
   identityKey: string
   publicKey: string
   currentPayoutScript?: string | null
+  network?: string
+  connected?: boolean
   connectedAt?: Date | string
   lastAuthenticatedAt?: Date | string
+  updatedAt?: Date | string
 }
 
 export type WalletConnectionUpdateWithoutUserInput = {
@@ -605,9 +807,13 @@ export type WalletConnectionUpdateWithoutUserInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   ownedCommunities?: Prisma.CommunityUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionUncheckedUpdateWithoutUserInput = {
@@ -616,9 +822,13 @@ export type WalletConnectionUncheckedUpdateWithoutUserInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   ownedCommunities?: Prisma.CommunityUncheckedUpdateManyWithoutCurrentOwnerWalletConnectionNestedInput
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutActiveWalletConnectionNestedInput
 }
 
 export type WalletConnectionUncheckedUpdateManyWithoutUserInput = {
@@ -627,8 +837,11 @@ export type WalletConnectionUncheckedUpdateManyWithoutUserInput = {
   identityKey?: Prisma.StringFieldUpdateOperationsInput | string
   publicKey?: Prisma.StringFieldUpdateOperationsInput | string
   currentPayoutScript?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  network?: Prisma.StringFieldUpdateOperationsInput | string
+  connected?: Prisma.BoolFieldUpdateOperationsInput | boolean
   connectedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   lastAuthenticatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 
@@ -638,10 +851,12 @@ export type WalletConnectionUncheckedUpdateManyWithoutUserInput = {
 
 export type WalletConnectionCountOutputType = {
   ownedCommunities: number
+  authSessions: number
 }
 
 export type WalletConnectionCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   ownedCommunities?: boolean | WalletConnectionCountOutputTypeCountOwnedCommunitiesArgs
+  authSessions?: boolean | WalletConnectionCountOutputTypeCountAuthSessionsArgs
 }
 
 /**
@@ -661,6 +876,13 @@ export type WalletConnectionCountOutputTypeCountOwnedCommunitiesArgs<ExtArgs ext
   where?: Prisma.CommunityWhereInput
 }
 
+/**
+ * WalletConnectionCountOutputType without action
+ */
+export type WalletConnectionCountOutputTypeCountAuthSessionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.AuthSessionWhereInput
+}
+
 
 export type WalletConnectionSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -669,10 +891,14 @@ export type WalletConnectionSelect<ExtArgs extends runtime.Types.Extensions.Inte
   identityKey?: boolean
   publicKey?: boolean
   currentPayoutScript?: boolean
+  network?: boolean
+  connected?: boolean
   connectedAt?: boolean
   lastAuthenticatedAt?: boolean
+  updatedAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   ownedCommunities?: boolean | Prisma.WalletConnection$ownedCommunitiesArgs<ExtArgs>
+  authSessions?: boolean | Prisma.WalletConnection$authSessionsArgs<ExtArgs>
   _count?: boolean | Prisma.WalletConnectionCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["walletConnection"]>
 
@@ -683,8 +909,11 @@ export type WalletConnectionSelectCreateManyAndReturn<ExtArgs extends runtime.Ty
   identityKey?: boolean
   publicKey?: boolean
   currentPayoutScript?: boolean
+  network?: boolean
+  connected?: boolean
   connectedAt?: boolean
   lastAuthenticatedAt?: boolean
+  updatedAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["walletConnection"]>
 
@@ -695,8 +924,11 @@ export type WalletConnectionSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
   identityKey?: boolean
   publicKey?: boolean
   currentPayoutScript?: boolean
+  network?: boolean
+  connected?: boolean
   connectedAt?: boolean
   lastAuthenticatedAt?: boolean
+  updatedAt?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["walletConnection"]>
 
@@ -707,14 +939,18 @@ export type WalletConnectionSelectScalar = {
   identityKey?: boolean
   publicKey?: boolean
   currentPayoutScript?: boolean
+  network?: boolean
+  connected?: boolean
   connectedAt?: boolean
   lastAuthenticatedAt?: boolean
+  updatedAt?: boolean
 }
 
-export type WalletConnectionOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "provider" | "identityKey" | "publicKey" | "currentPayoutScript" | "connectedAt" | "lastAuthenticatedAt", ExtArgs["result"]["walletConnection"]>
+export type WalletConnectionOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "provider" | "identityKey" | "publicKey" | "currentPayoutScript" | "network" | "connected" | "connectedAt" | "lastAuthenticatedAt" | "updatedAt", ExtArgs["result"]["walletConnection"]>
 export type WalletConnectionInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   ownedCommunities?: boolean | Prisma.WalletConnection$ownedCommunitiesArgs<ExtArgs>
+  authSessions?: boolean | Prisma.WalletConnection$authSessionsArgs<ExtArgs>
   _count?: boolean | Prisma.WalletConnectionCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type WalletConnectionIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -729,6 +965,7 @@ export type $WalletConnectionPayload<ExtArgs extends runtime.Types.Extensions.In
   objects: {
     user: Prisma.$UserPayload<ExtArgs>
     ownedCommunities: Prisma.$CommunityPayload<ExtArgs>[]
+    authSessions: Prisma.$AuthSessionPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -737,8 +974,11 @@ export type $WalletConnectionPayload<ExtArgs extends runtime.Types.Extensions.In
     identityKey: string
     publicKey: string
     currentPayoutScript: string | null
+    network: string
+    connected: boolean
     connectedAt: Date
     lastAuthenticatedAt: Date
+    updatedAt: Date
   }, ExtArgs["result"]["walletConnection"]>
   composites: {}
 }
@@ -1135,6 +1375,7 @@ export interface Prisma__WalletConnectionClient<T, Null = never, ExtArgs extends
   readonly [Symbol.toStringTag]: "PrismaPromise"
   user<T extends Prisma.UserDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.UserDefaultArgs<ExtArgs>>): Prisma.Prisma__UserClient<runtime.Types.Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   ownedCommunities<T extends Prisma.WalletConnection$ownedCommunitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.WalletConnection$ownedCommunitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CommunityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  authSessions<T extends Prisma.WalletConnection$authSessionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.WalletConnection$authSessionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$AuthSessionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1170,8 +1411,11 @@ export interface WalletConnectionFieldRefs {
   readonly identityKey: Prisma.FieldRef<"WalletConnection", 'String'>
   readonly publicKey: Prisma.FieldRef<"WalletConnection", 'String'>
   readonly currentPayoutScript: Prisma.FieldRef<"WalletConnection", 'String'>
+  readonly network: Prisma.FieldRef<"WalletConnection", 'String'>
+  readonly connected: Prisma.FieldRef<"WalletConnection", 'Boolean'>
   readonly connectedAt: Prisma.FieldRef<"WalletConnection", 'DateTime'>
   readonly lastAuthenticatedAt: Prisma.FieldRef<"WalletConnection", 'DateTime'>
+  readonly updatedAt: Prisma.FieldRef<"WalletConnection", 'DateTime'>
 }
     
 
@@ -1594,6 +1838,30 @@ export type WalletConnection$ownedCommunitiesArgs<ExtArgs extends runtime.Types.
   take?: number
   skip?: number
   distinct?: Prisma.CommunityScalarFieldEnum | Prisma.CommunityScalarFieldEnum[]
+}
+
+/**
+ * WalletConnection.authSessions
+ */
+export type WalletConnection$authSessionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the AuthSession
+   */
+  select?: Prisma.AuthSessionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the AuthSession
+   */
+  omit?: Prisma.AuthSessionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.AuthSessionInclude<ExtArgs> | null
+  where?: Prisma.AuthSessionWhereInput
+  orderBy?: Prisma.AuthSessionOrderByWithRelationInput | Prisma.AuthSessionOrderByWithRelationInput[]
+  cursor?: Prisma.AuthSessionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.AuthSessionScalarFieldEnum | Prisma.AuthSessionScalarFieldEnum[]
 }
 
 /**
