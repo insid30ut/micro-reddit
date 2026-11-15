@@ -156,6 +156,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     authService = new WalletAuthService({
       prisma,
       sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'test' },
     });
     await authService.clear();
   });
@@ -426,7 +427,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     }
   });
 
-  it('6. Throws UnsupportedWalletOperationError for unimplemented Phase 3/5 wallet operations', async () => {
+  it('6. Throws UnsupportedWalletOperationError for unimplemented Phase 5 payment operations and unsupported live minting in mock mode', async () => {
     const mockAdapter = new MockWalletAdapter();
     await mockAdapter.connect();
 
@@ -458,9 +459,11 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
           },
         ])
       ).rejects.toThrowError(UnsupportedWalletOperationError);
+    }
 
+    for (const liveAdapter of [yoursAdapter, handcashAdapter]) {
       await expect(
-        adapter.mintOrdinal({
+        liveAdapter.mintOrdinal({
           contentBase64: 'dGVzdA==',
           contentType: 'application/json',
           metadata: {
@@ -474,6 +477,22 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
         })
       ).rejects.toThrowError(UnsupportedWalletOperationError);
     }
+
+    // MockWalletAdapter supports simulated 1Sat Ordinal minting in Phase 3
+    const mockMintResult = await mockAdapter.mintOrdinal({
+      contentBase64: 'dGVzdA==',
+      contentType: 'application/json',
+      metadata: {
+        app: 'community-platform',
+        type: 'ord',
+        name: 'Test Community',
+        communityId: '00000000-0000-0000-0000-000000000001',
+        schemaVersion: 1,
+        platform: 'community-platform',
+      },
+    });
+    expect(mockMintResult.isMock).toBe(true);
+    expect(mockMintResult.origin).toBe(`${mockMintResult.txid}_0`);
   });
 
   it('7. Handles wallet disconnection cleanly on both adapter and persistent server session', async () => {
@@ -807,10 +826,12 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     const instanceA = new WalletAuthService({
       prisma,
       sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'test' },
     });
     const instanceB = new WalletAuthService({
       prisma,
       sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'test' },
     });
 
     const payload = {
@@ -846,10 +867,12 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     const instanceA = new WalletAuthService({
       prisma,
       sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'test' },
     });
     const instanceB = new WalletAuthService({
       prisma,
       sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'test' },
     });
 
     const challenge = await instanceA.issueChallenge({
@@ -966,5 +989,81 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     expect(expiredCookie.secure).toBe(true);
     expect(expiredCookie.httpOnly).toBe(true);
     expect(expiredCookie.maxAge).toBe(0);
+  });
+
+  it('15. Enforces server-configured BSV_NETWORK and does not silently derive payoutScript from identityKey', async () => {
+    const mainnetAuthService = new WalletAuthService({
+      prisma,
+      sessionSecret: testSessionSecret,
+      envSource: { BSV_NETWORK: 'main' },
+    });
+
+    // HandCash BRC-100 adapter does NOT silently derive a payoutScript from identityKey
+    const handcashSub = createBRC100WalletSubstrate({
+      seedLabel: 'handcash-no-silent-payout',
+      version: 'handcash-1.4.2',
+      network: 'mainnet',
+    });
+    const handcashAdapter = new HandCashWalletAdapter({
+      brc100Wallet: handcashSub.walletClient,
+    });
+    const hcConn = await handcashAdapter.connect();
+    expect(hcConn.payoutScript).toBeUndefined();
+
+    // Yours BRC-100 CWI adapter does NOT silently derive a payoutScript from identityKey
+    const yoursSub = createBRC100WalletSubstrate({
+      seedLabel: 'yours-no-silent-payout',
+      version: 'yours-2.5.0',
+      network: 'mainnet',
+    });
+    const yoursAdapter = new YoursWalletAdapter({
+      brc100Wallet: yoursSub.walletClient,
+    });
+    const yoursConn = await yoursAdapter.connect();
+    expect(yoursConn.payoutScript).toBeUndefined();
+
+    // Client supplying mismatched network ('test' when server is 'main') is rejected
+    const challengeMismatch = await mainnetAuthService.issueChallenge({
+      provider: 'handcash',
+      domain: appDomain,
+    });
+    const sigMismatch = await handcashAdapter.signChallenge(
+      challengeMismatch.challengeText
+    );
+    await expect(
+      mainnetAuthService.verifyChallengeAndAuthenticate({
+        challengeId: challengeMismatch.id,
+        provider: 'handcash',
+        publicKey: sigMismatch.publicKey,
+        identityKey: hcConn.identityKey,
+        signature: sigMismatch.signature,
+        ...(sigMismatch.keyID ? { keyID: sigMismatch.keyID } : {}),
+        network: 'test',
+        expectedDomain: appDomain,
+      })
+    ).rejects.toMatchObject({
+      code: 'NETWORK_MISMATCH',
+      statusCode: 400,
+    });
+
+    // Valid authentication on server's network stores network='main' and payoutScript=null when not explicitly provided
+    const challengeValid = await mainnetAuthService.issueChallenge({
+      provider: 'handcash',
+      domain: appDomain,
+    });
+    const sigValid = await handcashAdapter.signChallenge(
+      challengeValid.challengeText
+    );
+    const verified = await mainnetAuthService.verifyChallengeAndAuthenticate({
+      challengeId: challengeValid.id,
+      provider: 'handcash',
+      publicKey: sigValid.publicKey,
+      identityKey: hcConn.identityKey,
+      signature: sigValid.signature,
+      ...(sigValid.keyID ? { keyID: sigValid.keyID } : {}),
+      expectedDomain: appDomain,
+    });
+    expect(verified.activeWallet.network).toBe('main');
+    expect(verified.activeWallet.payoutScript).toBeNull();
   });
 });

@@ -15,6 +15,10 @@ export interface ParsedOrdinalScript {
   hasOrdEnvelope: boolean;
   /** Detected MIME content-type inside the "ord" envelope if present */
   contentType: string | null;
+  /** Extracted inscription payload in lowercase hex if present inside the "ord" envelope */
+  contentHex?: string | null;
+  /** Extracted inscription payload decoded as UTF-8 text (for text/* or application/json) */
+  contentUtf8?: string | null;
 }
 
 export interface OrdinalOwnershipState {

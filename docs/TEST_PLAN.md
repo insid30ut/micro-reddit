@@ -38,9 +38,23 @@
    - **Test 9:** Linking an additional wallet to an existing account (e.g., linking HandCash to an account already authenticated with Yours Wallet) and blocking unauthorized cross-account wallet claiming (`409 Conflict` `UNAUTHORIZED_WALLET_LINK`).
    - **Test 10:** Explicit provider selection when both Yours and HandCash are available simultaneously, plus vendor version prefix mismatch protection (`PROVIDER_MISMATCH`).
 
-## Subsequent Phase Tests (Phases 3–6)
+## Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independent Mint Verification Tests (Implemented)
 
-- **Phase 3:** Community creation, 1Sat Ordinal minting, and origin verification.
+6. **Community Creation & NFT Minting Tests (`tests/unit/community-minting.test.ts` — 11 Tests):**
+   - **Test 1:** Valid community creation persists `PENDING_MINT` community and initial 70/30 `RevenuePolicy` (`7000` / `3000` bps) in PostgreSQL.
+   - **Test 2:** Duplicate community slug rejection (`DUPLICATE_SLUG`, case-insensitive & normalized slug collision detection).
+   - **Test 3:** Unauthenticated community creation rejection (`UNAUTHENTICATED`, empty or invalid `creatorUserId`).
+   - **Test 4:** Deterministic NFT metadata serialization (`serializeCommunityNftMetadataDeterministically` produces byte-for-byte identical canonical JSON and SHA-256 digests regardless of input property order or Unicode normalization form).
+   - **Test 5:** Successful mock NFT minting (`MockMintingAdapter` constructs a genuine 1Sat Ordinal inscription locking script and stores the 1-satoshi output in `MockChainTransactionStore`).
+   - **Test 6:** Successful mint verification and community activation (`MintVerificationService` verifies the inscription, creates the `CommunityNFT` and `MINT` `OwnershipEvent`, sets `Community.currentOwnerScript` to the verified on-chain output locking script, and transitions `Community.status` from `PENDING_MINT` to `ACTIVE`).
+   - **Test 7:** Rejection of invalid or missing transaction during mint verification (`TRANSACTION_NOT_FOUND`, `NETWORK_MISMATCH`, and `NON_ONE_SATOSHI_OUTPUT`).
+   - **Test 8:** Rejection of mismatched community metadata (`COMMUNITY_ID_MISMATCH` when a valid 1Sat Ordinal inscription for Community B is submitted to activate Community A).
+   - **Test 9:** Rejection of non-P2PKH / non-routable owner locking script (`UNROUTABLE_OWNER_SCRIPT` when the ordinal envelope wraps `OP_TRUE` instead of a standard 25-byte P2PKH locking script).
+   - **Test 10:** Prevention of duplicate minting for the same community (`COMMUNITY_ALREADY_MINTED` in both `MockMintingAdapter` and `MintVerificationService`).
+   - **Test 11:** Enforcement of confirmation threshold (`OWNERSHIP_CONFIRMATIONS_REQUIRED = 2` keeps a 0-conf minted ordinal in `mintStatus = 'MINTED'` and `Community.status = 'PENDING_MINT'` until confirmations reach 2, then transitions to `VERIFIED` and `ACTIVE`).
+
+## Subsequent Phase Tests (Phases 4–6)
+
 - **Phase 4:** Ownership indexing, transfer detection, and confirmation threshold gating.
 - **Phase 5:** End-to-end multi-output payment intent creation, transaction verification, and security rejection tests.
 - **Phase 6:** Full Alice-to-Bob NFT transfer and 70/30 revenue routing switch test.

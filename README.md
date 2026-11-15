@@ -11,9 +11,9 @@ A proof-of-concept application demonstrating that a community can be represented
 5. **PaymentIntent snapshot semantics:** each intent snapshots the verified owner outpoint/script at creation with a short expiry; later transfers apply to new intents.
 6. **Safe mock mode by default:** `APP_MODE="mock"`. No mainnet broadcast, minting or spending without explicit manual approval.
 
-## Current status: Phase 2 (Wallet Authentication) — complete pending review
+## Current status: Phase 3 (Community NFT Minting) — complete pending review
 
-Phase 3 (community creation / minting) has **not** been started.
+Phases 1 (Project Foundation), 2 (Wallet Authentication & Persistence), and 3 (Community Creation, Deterministic 1Sat Ordinal Metadata, Minting Architecture & Independent Mint Verification) are implemented and tested. Phases 4 (Ownership Transfer Indexing) and 5 (Atomic Multi-Output Payments) have **not** been started.
 
 ## Database
 
@@ -44,22 +44,43 @@ Challenges, sessions, users, wallet connections and audit events live in Postgre
 ## Production configuration
 
 In `NODE_ENV=production` or `APP_MODE=live`, startup/config validation **fails** if:
-- `DATABASE_URL` is missing or points at localhost (no silent local fallback; `prisma.config.ts` likewise requires `DIRECT_URL`/`DATABASE_URL`),
+- `DATABASE_URL` is missing or points at localhost (`localhost`, `127.0.0.1`, `[::1]`) — no silent local fallback,
+- `prisma.config.ts` (`resolveMigrationDatabaseUrl`) receives a missing or localhost (`localhost`, `127.0.0.1`, `[::1]`) `DIRECT_URL`/`DATABASE_URL`,
 - `SESSION_SECRET` is missing, shorter than 32 characters, or a known development placeholder.
 
-Local development keeps mock mode and the local database fallback.
+Local development keeps mock mode (`APP_MODE="mock"`) and the local database fallback.
+
+## Phase 3: Community creation, deterministic 1Sat metadata, and independent mint verification
+
+- **Community creation (`/communities/new`, `POST /api/communities`):**
+  - Requires an authenticated server session (`originalCreatorId` is derived strictly from the server session).
+  - Validates `name`, `slug` (normalized lowercase URL-safe slug), `description`, and optional `artworkUrl` via Zod.
+  - Rejects duplicate slugs (`409 DUPLICATE_SLUG`).
+  - Persists the community in PostgreSQL with `status = 'PENDING_MINT'` and an initial `RevenuePolicy` (`7000` bps owner / `3000` bps platform) with `currentOwnerScript = null`.
+- **Deterministic Version 1 1Sat Ordinal metadata (`src/lib/ordinals/metadata.ts`):**
+  - Canonical JSON with lexicographically ordered keys (`app`, `artworkUrl`, `communityId`, `description`, `name`, `platform`, `schemaVersion`, `type`) and NFC-normalized UTF-8 strings.
+- **Modular minting (`src/adapters/ordinals/*`):**
+  - `MockMintingAdapter` constructs genuine 1Sat Ordinal inscription locking scripts (`OP_FALSE OP_IF "ord" OP_1 "application/json" OP_0 <canonical-json-bytes> OP_ENDIF <25-byte-P2PKH>`) in an in-memory transaction store without network broadcast.
+  - `OneSatMintingAdapter` wraps `@1sat/actions` (`inscribe.execute`) and `@1sat/client` (`OneSatServices`) for live mode (`APP_MODE="live"`), gated against accidental execution in mock mode.
+- **Independent mint verification (`src/lib/ordinals/mint-verification-service.ts`):**
+  - A community **never** transitions to `ACTIVE` from client-supplied transaction claims alone.
+  - `MintVerificationService` independently fetches the transaction from the chain lookup provider, verifies network match (`BSV_NETWORK`), output existence, 1-satoshi output value, valid 1Sat `"ord"` inscription envelope, deterministic metadata schema & `communityId` match, permanent origin (`<txid>_<vout>`), standard 25-byte P2PKH spending condition (`scriptType = 'P2PKH'`, `isPayoutRoutable = true`), and required confirmation threshold (`confirmations >= OWNERSHIP_CONFIRMATIONS_REQUIRED`).
+  - Only when verified and confirmed does it set `Community.status = 'ACTIVE'` and assign `Community.currentOwnerScript` from the verified on-chain NFT output's locking script.
 
 ## Wallet integration testing status
 
 | Provider | Status |
 |---|---|
-| Mock | Fully tested (deterministic `@bsv/sdk` ProtoWallet). |
+| Mock | Fully tested (deterministic `@bsv/sdk` ProtoWallet for auth + `MockMintingAdapter` for 1Sat Ordinal inscription scripts). |
 | Yours (BRC-100 `window.CWI` and `window.yours` extension) | **Simulated only.** Tested against `ProtoWallet`/BSM fixtures that imitate the provider interface. **Not tested against a real Yours extension.** |
 | HandCash (BRC-100 substrate) | **Simulated only.** **Not tested against a real HandCash wallet.** |
 
 Simulated tests prove our adapter + server verification logic is self-consistent; they do **not** prove real-provider behavior (actual key semantics, exact network strings, prompt flows, signature encodings). Real-wallet testing must be done manually in a browser with each wallet installed.
 
-Design notes: providers are always selected explicitly (never `auto`), vendor-version checks reject a mismatched provider, and the server derives the payout script from the verified `identityKey`. If a real wallet's signing/payment keys differ from its identity key, revenue routing in later phases must use scripts verified on-chain, not client-reported ones.
+Design notes:
+- Providers are always selected explicitly (never `auto`) and vendor-version checks reject a mismatched provider.
+- Server-enforced network: the server enforces its configured `BSV_NETWORK` (`'main' | 'test'`) and rejects any client-supplied network mismatch (`400 NETWORK_MISMATCH`).
+- Separation of identity keys and payment keys: BRC-100 `identityKey` is NOT assumed to be a wallet's BSV payment key. `YoursWalletAdapter` only derives a default P2PKH `payoutScript` on the `window.yours` extension path where `getPubKeys().bsvPubKey` (the dedicated BSV payment public key) is explicitly returned; on BRC-100 (`window.CWI`) and `HandCashWalletAdapter`, `payoutScript` is `null` unless explicitly provided. Initial community ownership (`Community.currentOwnerScript`) is authoritative from the verified on-chain locking script of the minted 1Sat Ordinal output.
 
 ## Quick start
 
@@ -79,4 +100,4 @@ Design notes: providers are always selected explicitly (never `auto`), vendor-ve
 - No real-wallet (Yours/HandCash) testing yet.
 - No rate limiting on `/api/auth/*`; no periodic cleanup of expired challenges/sessions.
 - Integration suite was not run against Supabase (it is destructive); Supabase was verified via migration status, schema-drift diff and column-default inspection.
-- Phases 3+ (minting, payments, ownership indexing) are not implemented.
+- Phases 4+ (ownership transfer indexing, atomic multi-output payments) are not implemented yet.

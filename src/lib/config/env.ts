@@ -74,6 +74,37 @@ export function resolveDatabaseUrl(
   return LOCAL_DEV_DATABASE_URL;
 }
 
+/**
+ * Resolves the Prisma migration database URL (DIRECT_URL preferred, falling back to DATABASE_URL).
+ * Rejects missing or localhost URLs when NODE_ENV=production or APP_MODE=live.
+ */
+export function resolveMigrationDatabaseUrl(
+  explicitUrl?: string,
+  envSource: Record<string, string | undefined> = process.env
+): string {
+  const isStrictProduction =
+    envSource.NODE_ENV === 'production' || envSource.APP_MODE === 'live';
+  const candidate =
+    explicitUrl ?? envSource.DIRECT_URL ?? envSource.DATABASE_URL;
+
+  if (candidate && candidate.trim().length > 0) {
+    if (isStrictProduction && /@(localhost|127\.0\.0\.1|\[::1\])[:/]/i.test(candidate)) {
+      throw new Error(
+        'DIRECT_URL (or DATABASE_URL) must not point to localhost when NODE_ENV=production or APP_MODE=live.'
+      );
+    }
+    return candidate;
+  }
+
+  if (isStrictProduction) {
+    throw new Error(
+      'DIRECT_URL (or DATABASE_URL) must be explicitly configured in production/live mode; no local fallback.'
+    );
+  }
+
+  return LOCAL_DEV_DATABASE_URL;
+}
+
 const rawEnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).optional(),

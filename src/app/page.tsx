@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { parseAppEnv } from '@/lib/config/env';
 import { calculateRevenueAllocation } from '@/lib/payments/revenue-calculator';
 import { WalletConnectPanel } from '@/components/wallet/wallet-connect-panel';
@@ -21,9 +22,24 @@ export default function HomePage() {
             BSV Community NFT &amp; Micropayment PoC
           </h1>
           <p className="mt-2 text-sm text-slate-400">
-            Phase 2 Wallet Authentication — 1Sat Ordinals Ownership &amp; 70/30
+            Phase 3 Community NFT Minting — 1Sat Ordinals Ownership &amp; 70/30
             Revenue Routing on Bitcoin SV ({env.BSV_NETWORK}net config)
           </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/communities"
+            className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
+          >
+            Browse Communities
+          </Link>
+          <Link
+            href="/communities/new"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
+          >
+            + Create Community
+          </Link>
         </div>
       </div>
 

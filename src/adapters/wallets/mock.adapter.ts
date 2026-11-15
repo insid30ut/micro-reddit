@@ -1,4 +1,5 @@
 import { PrivateKey, ProtoWallet } from '@bsv/sdk';
+import { MockMintingAdapter } from '@/adapters/ordinals/mock-minting.adapter';
 import {
   UnsupportedWalletOperationError,
   type WalletAdapter,
@@ -176,17 +177,35 @@ export class MockWalletAdapter implements WalletAdapter {
     throw new UnsupportedWalletOperationError(
       'mock',
       'sendOutputs',
-      'Payment transaction construction and broadcasting are disabled during Phase 2 (Wallet Authentication).'
+      'Payment transaction construction and broadcasting are disabled until Phase 5 (Revenue Distribution).'
     );
   }
 
-  public async mintOrdinal(_input: MintOrdinalInput): Promise<MintResult> {
+  public async mintOrdinal(input: MintOrdinalInput): Promise<MintResult> {
     this.ensureConnected();
-    throw new UnsupportedWalletOperationError(
-      'mock',
-      'mintOrdinal',
-      'Ordinal NFT minting is disabled during Phase 2 (Wallet Authentication).'
-    );
+    const identity = await this.getIdentity();
+    const destinationP2PKHScript =
+      input.destinationScript ??
+      identity.payoutScript ??
+      deriveP2PKHScriptFromPublicKey(identity.publicKey);
+
+    const mockMinter = new MockMintingAdapter();
+    const minted = await mockMinter.mintCommunityOrdinal({
+      communityId: input.metadata.communityId,
+      name: input.metadata.name,
+      description: input.metadata.description ?? `${input.metadata.name} Community`,
+      artworkUrl: input.metadata.artworkUrl ?? null,
+      destinationP2PKHScript,
+      network: this.network,
+    });
+
+    return {
+      txid: minted.txid,
+      vout: minted.vout,
+      origin: minted.origin,
+      lockingScript: minted.rawOutputScriptHex,
+      isMock: true,
+    };
   }
 
   public async getNetwork(): Promise<'main' | 'test'> {

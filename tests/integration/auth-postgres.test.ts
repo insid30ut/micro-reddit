@@ -27,7 +27,7 @@ async function login(
   persona: 'alice' | 'bob' | 'payer',
   currentSessionToken?: string
 ) {
-  const adapter = new MockWalletAdapter({ persona, network: 'test' });
+  const adapter = new MockWalletAdapter({ persona });
   const conn = await adapter.connect();
   const challenge = await service.issueChallenge({
     provider: 'mock',
@@ -42,7 +42,7 @@ async function login(
     identityKey: conn.identityKey,
     signature: sig.signature,
     ...(sig.keyID ? { keyID: sig.keyID } : {}),
-    network: 'test',
+    ...(conn.payoutScript ? { payoutScript: conn.payoutScript } : {}),
     expectedDomain: DOMAIN,
     ...(currentSessionToken ? { currentSessionToken } : {}),
   });

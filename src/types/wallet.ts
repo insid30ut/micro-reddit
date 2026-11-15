@@ -76,6 +76,8 @@ export interface OrdinalMetadata {
   app: 'community-platform';
   type: 'ord';
   name: string;
+  description?: string;
+  artworkUrl?: string | null;
   communityId: string;
   schemaVersion: 1;
   platform: 'community-platform';

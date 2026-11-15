@@ -7,7 +7,6 @@ import {
 import {
   AUTH_BRC100_PROTOCOL_ID,
   DEFAULT_AUTH_KEY_ID,
-  deriveP2PKHScriptFromPublicKey,
   extractNonceFromChallenge,
   isValidCompressedPublicKey,
 } from '@/lib/auth/crypto-verify';
@@ -107,14 +106,16 @@ export class HandCashWalletAdapter implements WalletAdapter {
       const rawNet = String(netResult.network ?? '').toLowerCase();
       const network: 'main' | 'test' =
         rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
-      const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedPubKey);
 
+      // Do NOT silently derive a static P2PKH payout script from HandCash's BRC-100
+      // root identityKey. HandCash payment destinations use protocol-derived keys or
+      // handles rather than the raw identityKey, and NFT ownership payout routing is
+      // determined strictly by the verified on-chain locking script of the NFT output.
       this.activeWallet = candidate;
       this.cachedIdentity = {
         provider: 'handcash',
         identityKey: normalizedPubKey,
         publicKey: normalizedPubKey,
-        payoutScript,
         network,
         displayName: 'HandCash BRC-100 Wallet',
         version,
@@ -194,7 +195,7 @@ export class HandCashWalletAdapter implements WalletAdapter {
     throw new UnsupportedWalletOperationError(
       'handcash',
       'sendOutputs',
-      'Multi-output BSV transaction broadcasting is disabled during Phase 2 (Wallet Authentication).'
+      'Multi-output BSV transaction broadcasting is disabled until Phase 5 (Revenue Distribution).'
     );
   }
 
@@ -209,7 +210,7 @@ export class HandCashWalletAdapter implements WalletAdapter {
     throw new UnsupportedWalletOperationError(
       'handcash',
       'mintOrdinal',
-      '1Sat Ordinal minting is not supported by HandCash BRC-100 adapter during Phase 2.'
+      'Direct 1Sat Ordinal inscription minting is not supported by the HandCash BRC-100 bridge without an external 1Sat funding provider.'
     );
   }
 

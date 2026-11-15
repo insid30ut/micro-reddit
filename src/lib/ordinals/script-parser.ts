@@ -42,6 +42,169 @@ export function buildP2PKHScriptFromPubKeyHash(pubKeyHashHex: string): string {
 }
 
 /**
+ * Builds a genuine 1Sat Ordinal inscription locking script:
+ * `OP_FALSE OP_IF "ord" OP_1 <contentType> OP_0 <contentBytes> OP_ENDIF <25-byte P2PKH script>`
+ *
+ * The underlying spending condition is a standard 25-byte P2PKH locking script.
+ */
+export function build1SatOrdinalLockingScript(params: {
+  ownerP2PKHScriptHex: string;
+  contentBytes: Uint8Array;
+  contentType: string;
+}): string {
+  const normalizedOwnerScript = params.ownerP2PKHScriptHex.trim().toLowerCase();
+  if (!isStandardP2PKHScript(normalizedOwnerScript)) {
+    throw new Error(
+      `Invalid ownerP2PKHScriptHex: expected a 25-byte standard P2PKH locking script, received "${params.ownerP2PKHScriptHex}".`
+    );
+  }
+  const trimmedType = params.contentType.trim();
+  if (!trimmedType || trimmedType.length > 255) {
+    throw new Error('Inscription contentType must be a non-empty MIME string (<= 255 chars).');
+  }
+
+  const script = new Script();
+  // 1Sat Ordinal envelope prefix: OP_FALSE OP_IF "ord" OP_1 <contentType> OP_0 <content> OP_ENDIF
+  script.writeOpCode(OP.OP_FALSE);
+  script.writeOpCode(OP.OP_IF);
+  script.writeBin(Array.from(Buffer.from('ord', 'utf8')));
+  script.writeOpCode(OP.OP_1);
+  script.writeBin(Array.from(Buffer.from(trimmedType, 'utf8')));
+  script.writeOpCode(OP.OP_0);
+  script.writeBin(Array.from(params.contentBytes));
+  script.writeOpCode(OP.OP_ENDIF);
+
+  // Append underlying P2PKH spending condition
+  const p2pkhScript = Script.fromHex(normalizedOwnerScript);
+  for (const chunk of p2pkhScript.chunks) {
+    script.chunks.push(chunk);
+  }
+
+  return script.toHex().toLowerCase();
+}
+
+export interface ExtractedOrdinalInscription {
+  hasOrdEnvelope: boolean;
+  contentType: string | null;
+  contentHex: string | null;
+  contentUtf8: string | null;
+}
+
+/**
+ * Extracts the 1Sat Ordinal inscription envelope (`OP_FALSE OP_IF "ord" ... OP_ENDIF`)
+ * MIME content-type and raw payload from an output locking script hex.
+ */
+export function extractOrdinalInscriptionEnvelope(
+  rawScriptHex: string
+): ExtractedOrdinalInscription {
+  const normalizedRaw = rawScriptHex.trim().toLowerCase();
+  if (
+    normalizedRaw.length === 0 ||
+    normalizedRaw.length % 2 !== 0 ||
+    !/^[0-9a-f]+$/.test(normalizedRaw)
+  ) {
+    return {
+      hasOrdEnvelope: false,
+      contentType: null,
+      contentHex: null,
+      contentUtf8: null,
+    };
+  }
+
+  let parsedScript: Script;
+  try {
+    parsedScript = Script.fromHex(normalizedRaw);
+  } catch {
+    return {
+      hasOrdEnvelope: false,
+      contentType: null,
+      contentHex: null,
+      contentUtf8: null,
+    };
+  }
+
+  const chunks = parsedScript.chunks;
+  for (let i = 0; i < chunks.length - 2; i++) {
+    const chunk = chunks[i];
+    const nextChunk = chunks[i + 1];
+    if (
+      chunk &&
+      nextChunk &&
+      chunk.op === OP.OP_FALSE &&
+      nextChunk.op === OP.OP_IF
+    ) {
+      let endIfIndex = -1;
+      let depth = 1;
+      for (let j = i + 2; j < chunks.length; j++) {
+        const inner = chunks[j];
+        if (!inner) continue;
+        if (inner.op === OP.OP_IF || inner.op === OP.OP_NOTIF) {
+          depth++;
+        } else if (inner.op === OP.OP_ENDIF) {
+          depth--;
+          if (depth === 0) {
+            endIfIndex = j;
+            break;
+          }
+        }
+      }
+
+      if (endIfIndex !== -1) {
+        const markerStr = bytesToUtf8(chunks[i + 2]?.data);
+        if (markerStr === 'ord') {
+          let contentType: string | null = null;
+          let contentHex: string | null = null;
+          let contentUtf8: string | null = null;
+
+          let k = i + 3;
+          while (k < endIfIndex) {
+            const tagChunk = chunks[k];
+            const valChunk = chunks[k + 1];
+            if (!tagChunk || k + 1 >= endIfIndex || !valChunk) {
+              break;
+            }
+            const isField1 =
+              tagChunk.op === OP.OP_1 ||
+              (tagChunk.data !== undefined &&
+                tagChunk.data.length === 1 &&
+                tagChunk.data[0] === 1);
+            const isField0 =
+              tagChunk.op === OP.OP_0 ||
+              tagChunk.op === OP.OP_FALSE ||
+              (tagChunk.data !== undefined &&
+                tagChunk.data.length === 1 &&
+                tagChunk.data[0] === 0);
+
+            if (isField1 && valChunk.data) {
+              contentType = bytesToUtf8(valChunk.data);
+            } else if (isField0) {
+              const rawBytes = valChunk.data ?? [];
+              contentHex = bytesToHex(rawBytes);
+              contentUtf8 = bytesToUtf8(rawBytes);
+            }
+            k += 2;
+          }
+
+          return {
+            hasOrdEnvelope: true,
+            contentType,
+            contentHex,
+            contentUtf8,
+          };
+        }
+      }
+    }
+  }
+
+  return {
+    hasOrdEnvelope: false,
+    contentType: null,
+    contentHex: null,
+    contentUtf8: null,
+  };
+}
+
+/**
  * Protocol-aware 1Sat Ordinals locking script parser.
  *
  * Never assumes an inscription output uses a standard P2PKH locking script.
@@ -118,7 +281,6 @@ export function parseOrdinalOutputScript(rawScriptHex: string): ParsedOrdinalScr
         const markerStr = bytesToUtf8(markerChunk?.data);
         if (markerStr === 'ord') {
           hasOrdEnvelope = true;
-          // Walk inside the ord envelope to find OP_1 (content-type tag) followed by MIME bytes
           for (let k = i + 3; k < endIfIndex; k++) {
             const c = chunks[k];
             const valChunk = chunks[k + 1];

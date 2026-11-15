@@ -5,6 +5,7 @@ import {
   LOCAL_DEV_DATABASE_URL,
   parseAppEnv,
   resolveDatabaseUrl,
+  resolveMigrationDatabaseUrl,
   resolveValidatedSessionSecret,
 } from '@/lib/config/env';
 
@@ -117,5 +118,36 @@ describe('Environment Configuration & Mock Mode Safeguards', () => {
     // Development / mock mode keeps the local fallback
     expect(resolveDatabaseUrl(undefined, {})).toBe(LOCAL_DEV_DATABASE_URL);
     expect(parseAppEnv({}).DATABASE_URL).toBe(LOCAL_DEV_DATABASE_URL);
+  });
+
+  it('rejects missing or localhost DIRECT_URL / DATABASE_URL in migration config for production or live mode', () => {
+    expect(() =>
+      resolveMigrationDatabaseUrl(undefined, { NODE_ENV: 'production' })
+    ).toThrow(/DIRECT_URL \(or DATABASE_URL\) must be explicitly configured/i);
+
+    expect(() =>
+      resolveMigrationDatabaseUrl(undefined, { APP_MODE: 'live' })
+    ).toThrow(/DIRECT_URL \(or DATABASE_URL\) must be explicitly configured/i);
+
+    expect(() =>
+      resolveMigrationDatabaseUrl(
+        'postgresql://postgres:postgres@localhost:5432/community_nft_poc',
+        { NODE_ENV: 'production' }
+      )
+    ).toThrow(/must not point to localhost/i);
+
+    expect(() =>
+      resolveMigrationDatabaseUrl(
+        'postgresql://postgres:postgres@127.0.0.1:5432/community_nft_poc',
+        { APP_MODE: 'live' }
+      )
+    ).toThrow(/must not point to localhost/i);
+
+    expect(
+      resolveMigrationDatabaseUrl(
+        'postgresql://u:p@db.example.com:5432/postgres',
+        { NODE_ENV: 'production', APP_MODE: 'live' }
+      )
+    ).toBe('postgresql://u:p@db.example.com:5432/postgres');
   });
 });

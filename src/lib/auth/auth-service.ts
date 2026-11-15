@@ -14,10 +14,10 @@ import {
   type AuthChallengeRecord,
 } from '@/lib/auth/challenge-service';
 import {
-  deriveP2PKHScriptFromPublicKey,
   isValidCompressedPublicKey,
   verifyWalletChallengeSignature,
 } from '@/lib/auth/crypto-verify';
+import { isStandardP2PKHScript } from '@/lib/ordinals/script-parser';
 import {
   AuthSessionError,
   SessionStore,
@@ -31,7 +31,9 @@ export type WalletAuthErrorCode =
   | 'CHALLENGE_REUSED'
   | 'DOMAIN_MISMATCH'
   | 'PROVIDER_MISMATCH'
+  | 'NETWORK_MISMATCH'
   | 'INVALID_PUBLIC_KEY'
+  | 'INVALID_PAYOUT_SCRIPT'
   | 'INVALID_SIGNATURE'
   | 'UNAUTHORIZED_WALLET_LINK'
   | 'WALLET_NOT_FOUND'
@@ -62,7 +64,7 @@ export interface WalletConnectionRecord {
   provider: WalletProviderType;
   identityKey: string;
   publicKey: string;
-  payoutScript: string;
+  payoutScript: string | null;
   network: 'main' | 'test';
   connected: boolean;
   lastVerifiedAt: Date;
@@ -89,6 +91,9 @@ export interface VerifyAuthInput {
   keyID?: string;
   signatureScheme?: SignatureScheme;
   expectedDomain: string;
+  /** Optional explicit P2PKH payout script reported by a wallet's payment key (never derived from identityKey on server). */
+  payoutScript?: string | null;
+  /** Client-reported network; must match the server's configured BSV_NETWORK when supplied. */
   network?: 'main' | 'test';
   displayName?: string;
   currentSessionToken?: string | null;
@@ -137,7 +142,7 @@ function mapWalletRow(row: PrismaWalletConnection): WalletConnectionRecord {
     provider: row.provider,
     identityKey: row.identityKey,
     publicKey: row.publicKey,
-    payoutScript: row.currentPayoutScript ?? '',
+    payoutScript: row.currentPayoutScript ?? null,
     network: row.network === 'main' ? 'main' : 'test',
     connected: row.connected,
     lastVerifiedAt: row.lastAuthenticatedAt,
@@ -195,11 +200,13 @@ function mapChallengeError(error: AuthChallengeError): WalletAuthError {
  */
 export class WalletAuthService {
   private readonly prisma: PrismaClient;
+  private readonly envSource: Record<string, string | undefined>;
   public readonly challengeStore: ChallengeStore;
   public readonly sessionStore: SessionStore;
 
   constructor(options?: WalletAuthServiceOptions) {
     this.prisma = options?.prisma ?? prisma;
+    this.envSource = options?.envSource ?? process.env;
     this.challengeStore = options?.challengeStore ?? new ChallengeStore(this.prisma);
     this.sessionStore =
       options?.sessionStore ??
@@ -210,6 +217,14 @@ export class WalletAuthService {
           : {}),
         ...(options?.envSource ? { envSource: options.envSource } : {}),
       });
+  }
+
+  /**
+   * Resolves the server's authoritative BSV network (`'main' | 'test'`).
+   * Client-supplied network values are never trusted to override server configuration.
+   */
+  public getServerNetwork(): 'main' | 'test' {
+    return this.envSource.BSV_NETWORK === 'test' ? 'test' : 'main';
   }
 
   private async recordAudit(
@@ -370,7 +385,47 @@ export class WalletAuthService {
       );
     }
 
-    const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedIdentityKey);
+    // 2b. Enforce the server's configured BSV network; never trust a mismatched client network
+    const serverNetwork = this.getServerNetwork();
+    if (input.network !== undefined && input.network !== serverNetwork) {
+      await this.recordAudit(
+        'AUTH_FAILED',
+        activeSession?.userId ?? null,
+        'AuthChallenge',
+        challenge.id,
+        {
+          reason: 'NETWORK_MISMATCH',
+          clientNetwork: input.network,
+          serverNetwork,
+        },
+        now
+      );
+      throw new WalletAuthError(
+        'NETWORK_MISMATCH',
+        `Wallet network "${input.network}" does not match server BSV_NETWORK "${serverNetwork}".`,
+        400
+      );
+    }
+
+    // 2c. Never silently derive a payout destination from `identityKey` on the server.
+    // Only record `currentPayoutScript` when an explicit, validated P2PKH payment script is provided.
+    let validatedPayoutScript: string | null = null;
+    if (
+      input.payoutScript !== undefined &&
+      input.payoutScript !== null &&
+      input.payoutScript.trim().length > 0
+    ) {
+      const normalizedScript = input.payoutScript.trim().toLowerCase();
+      if (!isStandardP2PKHScript(normalizedScript)) {
+        throw new WalletAuthError(
+          'INVALID_PAYOUT_SCRIPT',
+          'Explicit payoutScript must be a valid 25-byte standard P2PKH locking script.',
+          400
+        );
+      }
+      validatedPayoutScript = normalizedScript;
+    }
+
     const resolvedScheme: SignatureScheme = input.signatureScheme ?? 'brc100';
 
     // 3. Cryptographically verify the signature against the exact server-stored challenge text
@@ -479,8 +534,9 @@ export class WalletAuthService {
           data: {
             connected: true,
             publicKey: normalizedPubKey,
-            currentPayoutScript: payoutScript,
-            network: input.network ?? existingConnection.network,
+            currentPayoutScript:
+              validatedPayoutScript ?? existingConnection.currentPayoutScript,
+            network: serverNetwork,
             lastAuthenticatedAt: new Date(now.getTime()),
           },
         });
@@ -493,8 +549,8 @@ export class WalletAuthService {
               provider: input.provider,
               identityKey: normalizedIdentityKey,
               publicKey: normalizedPubKey,
-              currentPayoutScript: payoutScript,
-              network: input.network ?? 'test',
+              currentPayoutScript: validatedPayoutScript,
+              network: serverNetwork,
               connected: true,
               connectedAt: new Date(now.getTime()),
               lastAuthenticatedAt: new Date(now.getTime()),
@@ -538,8 +594,9 @@ export class WalletAuthService {
         data: {
           connected: true,
           publicKey: normalizedPubKey,
-          currentPayoutScript: payoutScript,
-          network: input.network ?? existingConnection.network,
+          currentPayoutScript:
+            validatedPayoutScript ?? existingConnection.currentPayoutScript,
+          network: serverNetwork,
           lastAuthenticatedAt: new Date(now.getTime()),
         },
       });
@@ -569,8 +626,8 @@ export class WalletAuthService {
               provider: input.provider,
               identityKey: normalizedIdentityKey,
               publicKey: normalizedPubKey,
-              currentPayoutScript: payoutScript,
-              network: input.network ?? 'test',
+              currentPayoutScript: validatedPayoutScript,
+              network: serverNetwork,
               connected: true,
               connectedAt: new Date(now.getTime()),
               lastAuthenticatedAt: new Date(now.getTime()),

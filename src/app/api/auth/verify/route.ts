@@ -18,6 +18,7 @@ const VerifyRequestSchema = z.object({
   signature: z.string().min(8),
   keyID: z.string().min(1).optional(),
   signatureScheme: z.enum(['brc100', 'ecdsa-sha256', 'bsm']).optional(),
+  payoutScript: z.string().optional(),
   network: z.enum(['main', 'test']).optional(),
   displayName: z.string().max(64).optional(),
 });
@@ -51,6 +52,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ...(parsed.data.signatureScheme
         ? { signatureScheme: parsed.data.signatureScheme }
         : {}),
+      ...(parsed.data.payoutScript ? { payoutScript: parsed.data.payoutScript } : {}),
       ...(parsed.data.network ? { network: parsed.data.network } : {}),
       ...(parsed.data.displayName ? { displayName: parsed.data.displayName } : {}),
       expectedDomain,

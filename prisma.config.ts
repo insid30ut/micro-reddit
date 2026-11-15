@@ -5,10 +5,17 @@ const isStrictProduction =
   process.env.NODE_ENV === 'production' || process.env.APP_MODE === 'live';
 const migrationUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 
-if (isStrictProduction && !migrationUrl) {
-  throw new Error(
-    'DIRECT_URL (or DATABASE_URL) must be explicitly configured in production/live mode; no local fallback.'
-  );
+if (isStrictProduction) {
+  if (!migrationUrl || migrationUrl.trim().length === 0) {
+    throw new Error(
+      'DIRECT_URL (or DATABASE_URL) must be explicitly configured in production/live mode; no local fallback.'
+    );
+  }
+  if (/@(localhost|127\.0\.0\.1|\[::1\])[:/]/i.test(migrationUrl)) {
+    throw new Error(
+      'DIRECT_URL (or DATABASE_URL) must not point to localhost when NODE_ENV=production or APP_MODE=live.'
+    );
+  }
 }
 
 export default defineConfig({

@@ -18,7 +18,7 @@ interface SessionWalletInfo {
   provider: WalletProviderType;
   identityKey: string;
   publicKey: string;
-  payoutScript: string;
+  payoutScript: string | null;
   network: 'main' | 'test';
   connected: boolean;
   lastVerifiedAt: string;
@@ -93,7 +93,6 @@ export function WalletConnectPanel({ appMode }: { appMode: 'mock' | 'live' }) {
         appMode,
         mockOptions: {
           persona: mockPersona,
-          network: 'test',
         },
       });
 
@@ -139,7 +138,7 @@ export function WalletConnectPanel({ appMode }: { appMode: 'mock' | 'live' }) {
           signature: sigResult.signature,
           keyID: sigResult.keyID,
           signatureScheme: sigResult.signatureScheme,
-          network: identity.network,
+          ...(identity.payoutScript ? { payoutScript: identity.payoutScript } : {}),
           displayName: identity.displayName,
         }),
       });
@@ -328,9 +327,12 @@ export function WalletConnectPanel({ appMode }: { appMode: 'mock' | 'live' }) {
               </dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-slate-400">Derived P2PKH Revenue Script</dt>
+              <dt className="text-slate-400">
+                Explicit Wallet Payment Script (Informational — On-Chain NFT Output Is Authoritative)
+              </dt>
               <dd className="truncate font-mono text-emerald-400">
-                {sessionData.activeWallet.payoutScript}
+                {sessionData.activeWallet.payoutScript ??
+                  'Not derived from identityKey (determined by verified NFT locking script)'}
               </dd>
             </div>
           </dl>

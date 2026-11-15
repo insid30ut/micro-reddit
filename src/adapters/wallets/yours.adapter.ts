@@ -177,15 +177,17 @@ export class YoursWalletAdapter implements WalletAdapter {
         const rawNet = String(netResult.network ?? '').toLowerCase();
         const network: 'main' | 'test' =
           rawNet === 'testnet' || rawNet === 'test' ? 'test' : 'main';
-        const payoutScript = deriveP2PKHScriptFromPublicKey(normalizedPubKey);
 
+        // Do NOT silently derive a payout destination from the BRC-100 root identity key,
+        // because Yours Wallet payment/ordinal keys differ from the root identityKey.
+        // Initial community ownership is determined authoritatively from the verified
+        // locking script of the minted 1Sat Ordinal output.
         this.activeBrc100Wallet = candidateBrc100;
         this.activeExtension = null;
         this.cachedIdentity = {
           provider: 'yours',
           identityKey: normalizedPubKey,
           publicKey: normalizedPubKey,
-          payoutScript,
           network,
           displayName: 'Yours Wallet',
           version,
@@ -221,19 +223,13 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        // Prefer bsvPubKey (BSV payment key) for payout script derivation when exposed,
-        // while keeping identityPubKey as the verified authentication identity key.
-        const payoutCandidateKey = (
-          pubKeys.bsvPubKey ??
-          pubKeys.ordPubKey ??
-          normalizedIdentityKey
-        )
-          .trim()
-          .toLowerCase();
-        const payoutKey = isValidCompressedPublicKey(payoutCandidateKey)
-          ? payoutCandidateKey
-          : normalizedIdentityKey;
-        const payoutScript = deriveP2PKHScriptFromPublicKey(payoutKey);
+        // Only derive a payout script when Yours extension explicitly exposes `bsvPubKey`
+        // (its dedicated BSV payment key). Never silently fall back to `identityPubKey`.
+        const explicitBsvPubKey = pubKeys.bsvPubKey?.trim().toLowerCase();
+        const payoutScript =
+          explicitBsvPubKey && isValidCompressedPublicKey(explicitBsvPubKey)
+            ? deriveP2PKHScriptFromPublicKey(explicitBsvPubKey)
+            : undefined;
 
         let network: 'main' | 'test' = 'main';
         if (extension.getNetwork) {
@@ -247,7 +243,7 @@ export class YoursWalletAdapter implements WalletAdapter {
           provider: 'yours',
           identityKey: normalizedIdentityKey,
           publicKey: normalizedIdentityKey,
-          payoutScript,
+          ...(payoutScript ? { payoutScript } : {}),
           network,
           displayName: 'Yours Wallet (Extension)',
           version: 'yours-extension',
@@ -378,11 +374,11 @@ export class YoursWalletAdapter implements WalletAdapter {
     throw new UnsupportedWalletOperationError(
       'yours',
       'sendOutputs',
-      'Multi-output BSV transaction broadcasting is disabled during Phase 2 (Wallet Authentication).'
+      'Multi-output BSV transaction broadcasting is disabled until Phase 5 (Revenue Distribution).'
     );
   }
 
-  public async mintOrdinal(_input: MintOrdinalInput): Promise<MintResult> {
+  public async mintOrdinal(input: MintOrdinalInput): Promise<MintResult> {
     if (!this.cachedIdentity) {
       throw new WalletConnectionError(
         'yours',
@@ -390,10 +386,24 @@ export class YoursWalletAdapter implements WalletAdapter {
         'Yours Wallet is not connected.'
       );
     }
+    if (!this.activeBrc100Wallet) {
+      throw new UnsupportedWalletOperationError(
+        'yours',
+        'mintOrdinal',
+        'Live 1Sat Ordinal minting via Yours Wallet requires an active BRC-100 CWI substrate and APP_MODE="live".'
+      );
+    }
+    if (!input.destinationScript) {
+      throw new UnsupportedWalletOperationError(
+        'yours',
+        'mintOrdinal',
+        'Live 1Sat Ordinal minting requires an explicit verified P2PKH destinationScript (never derived silently from identityKey).'
+      );
+    }
     throw new UnsupportedWalletOperationError(
       'yours',
       'mintOrdinal',
-      '1Sat Ordinal minting is disabled during Phase 2 (Wallet Authentication).'
+      'Direct mainnet broadcasting via Yours Wallet is disabled while APP_MODE="mock". Use OneSatMintingAdapter only when APP_MODE="live" is explicitly authorized.'
     );
   }
 
