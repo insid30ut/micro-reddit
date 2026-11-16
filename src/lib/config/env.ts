@@ -4,6 +4,15 @@ import { isStandardP2PKHScript } from '@/lib/ordinals/script-parser';
 export const DEV_DEFAULT_SESSION_SECRET =
   'development-only-session-secret-change-in-production-32chars';
 
+/**
+ * Placeholder P2PKH scripts whose 20-byte key hash is not a real wallet key (nobody can spend
+ * outputs sent to them). Acceptable as a local/mock default, never as a live revenue destination.
+ */
+export const DEV_PLACEHOLDER_PLATFORM_PAYOUT_SCRIPTS = new Set<string>([
+  '76a914000000000000000000000000000000000000000188ac',
+  '76a914000000000000000000000000000000000000000088ac',
+]);
+
 export const DEV_PLACEHOLDER_SESSION_SECRETS = new Set<string>([
   DEV_DEFAULT_SESSION_SECRET,
   'dev-mock-mode-session-secret-minimum-32-characters-long',
@@ -195,6 +204,20 @@ const rawEnvSchema = z
         code: z.ZodIssueCode.custom,
         path: ['NEXT_PUBLIC_APP_MODE'],
         message: `APP_MODE ("${env.APP_MODE}") and NEXT_PUBLIC_APP_MODE ("${env.NEXT_PUBLIC_APP_MODE}") must match.`,
+      });
+    }
+
+    if (
+      env.APP_MODE === 'live' &&
+      DEV_PLACEHOLDER_PLATFORM_PAYOUT_SCRIPTS.has(
+        env.PLATFORM_PAYOUT_SCRIPT.trim().toLowerCase()
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PLATFORM_PAYOUT_SCRIPT'],
+        message:
+          'PLATFORM_PAYOUT_SCRIPT must be set to a real platform-controlled P2PKH locking script when APP_MODE=live; the development placeholder sends revenue to a key nobody controls.',
       });
     }
 

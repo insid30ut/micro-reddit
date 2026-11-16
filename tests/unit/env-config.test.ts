@@ -94,6 +94,7 @@ describe('Environment Configuration & Mock Mode Safeguards', () => {
       NEXT_PUBLIC_APP_MODE: 'live',
       DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app',
       SESSION_SECRET: 'a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0',
+      PLATFORM_PAYOUT_SCRIPT: '76a9147d3b9a1e5c2f4a6b8c0d1e2f3a4b5c6d7e8f9a0b88ac',
     });
     expect(prodConfig.SESSION_SECRET.length).toBeGreaterThanOrEqual(32);
   });
@@ -235,7 +236,11 @@ describe('Environment Configuration & Mock Mode Safeguards', () => {
         BSV_NETWORK: row.bsvNetwork,
         ALLOW_MAINNET_BROADCAST: row.allowMainnetBroadcast,
         ...(row.appMode === 'live'
-          ? { DATABASE_URL: remoteDb, SESSION_SECRET: strongSecret }
+          ? {
+              DATABASE_URL: remoteDb,
+              SESSION_SECRET: strongSecret,
+              PLATFORM_PAYOUT_SCRIPT: '76a9147d3b9a1e5c2f4a6b8c0d1e2f3a4b5c6d7e8f9a0b88ac',
+            }
           : {}),
       };
 
@@ -287,5 +292,45 @@ describe('Environment Configuration & Mock Mode Safeguards', () => {
         });
       }
     }
+  });
+
+  it('rejects the placeholder PLATFORM_PAYOUT_SCRIPT in live mode but keeps it as the mock/dev default', () => {
+    const liveBase = {
+      APP_MODE: 'live',
+      NEXT_PUBLIC_APP_MODE: 'live',
+      DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app',
+      SESSION_SECRET: 'a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0',
+    };
+
+    // Unset in live mode falls back to the placeholder default and must be rejected
+    expect(() => parseAppEnv(liveBase)).toThrow(/PLATFORM_PAYOUT_SCRIPT must be set/i);
+
+    for (const placeholder of [
+      '76a914000000000000000000000000000000000000000188ac',
+      '76a914000000000000000000000000000000000000000088ac',
+      '76A914000000000000000000000000000000000000000188AC',
+    ]) {
+      expect(() =>
+        parseAppEnv({ ...liveBase, PLATFORM_PAYOUT_SCRIPT: placeholder })
+      ).toThrow(/PLATFORM_PAYOUT_SCRIPT must be set/i);
+    }
+
+    const realScript = '76a9147d3b9a1e5c2f4a6b8c0d1e2f3a4b5c6d7e8f9a0b88ac';
+    expect(
+      parseAppEnv({ ...liveBase, PLATFORM_PAYOUT_SCRIPT: realScript })
+        .PLATFORM_PAYOUT_SCRIPT
+    ).toBe(realScript);
+
+    // Mock mode (including a mock production build, as in CI) keeps the safe placeholder default
+    expect(parseAppEnv({}).PLATFORM_PAYOUT_SCRIPT).toBe(
+      '76a914000000000000000000000000000000000000000188ac'
+    );
+    expect(() =>
+      parseAppEnv({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app',
+        SESSION_SECRET: liveBase.SESSION_SECRET,
+      })
+    ).not.toThrow();
   });
 });

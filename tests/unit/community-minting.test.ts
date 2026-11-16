@@ -706,6 +706,7 @@ describe('Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independ
       DATABASE_URL: 'postgresql://user:pass@db.example.com:5432/postgres',
       SESSION_SECRET: testSessionSecret,
       OWNERSHIP_CONFIRMATIONS_REQUIRED: '1',
+      PLATFORM_PAYOUT_SCRIPT: '76a9147d3b9a1e5c2f4a6b8c0d1e2f3a4b5c6d7e8f9a0b88ac',
     };
 
     const yoursWallet = createSimulatedBrc100Substrate({
