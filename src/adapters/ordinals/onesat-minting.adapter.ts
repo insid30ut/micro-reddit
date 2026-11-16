@@ -415,7 +415,7 @@ export class OneSatMintingAdapter implements OrdinalMintingAdapter {
     if (runtime.bsvNetwork === 'main' && !runtime.allowMainnetMint) {
       throw new MintingAdapterError(
         'MAINNET_MINT_FORBIDDEN',
-        'Mainnet 1Sat Ordinal broadcasting is disabled unless APP_MODE="live", BSV_NETWORK="main", and ALLOW_MAINNET_BROADCAST="true" are all explicitly configured. Use BSV_NETWORK=test for live wallet testing.',
+        'Mainnet 1Sat Ordinal broadcasting is disabled unless APP_MODE="live", BSV_NETWORK="main", and ALLOW_MAINNET_BROADCAST="true" are all explicitly configured. Set ALLOW_MAINNET_BROADCAST="true" on the server to approve mainnet minting.',
         403
       );
     }

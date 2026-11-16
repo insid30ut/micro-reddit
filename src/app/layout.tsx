@@ -15,11 +15,21 @@ export default function RootLayout({
 }>) {
   const appMode = process.env.APP_MODE === 'live' ? 'live' : 'mock';
   const bsvNetwork = process.env.BSV_NETWORK === 'main' ? 'main' : 'test';
+  // Mirrors the server's mainnet guardrail so the browser minting adapter can honor the
+  // operator's explicit approval (APP_MODE=live + BSV_NETWORK=main + ALLOW_MAINNET_BROADCAST=true).
+  const allowMainnetBroadcast =
+    appMode === 'live' &&
+    bsvNetwork === 'main' &&
+    process.env.ALLOW_MAINNET_BROADCAST === 'true';
 
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-950 text-slate-100 antialiased">
-        <AppWalletProvider appMode={appMode} bsvNetwork={bsvNetwork}>
+        <AppWalletProvider
+          appMode={appMode}
+          bsvNetwork={bsvNetwork}
+          allowMainnetBroadcast={allowMainnetBroadcast}
+        >
           {children}
         </AppWalletProvider>
       </body>

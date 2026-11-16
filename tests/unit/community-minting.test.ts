@@ -1156,4 +1156,93 @@ describe('Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independ
       'https://example.com/art.png'
     );
   });
+
+  it('17. Live mainnet minting needs explicit approval and the wallet must be on the server network before anything is broadcast', async () => {
+    const communityId = '0b6f4f2e-6a0e-4d43-9a8e-3f1c2d4b5a61';
+    const ownerScript = '76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac';
+    const metadataInput = {
+      contentBase64: '',
+      contentType: 'application/json',
+      metadata: {
+        app: 'community-platform' as const,
+        type: 'ord' as const,
+        name: 'Mainnet Guild',
+        description: 'Live mainnet mint guardrail checks.',
+        artworkUrl: null,
+        communityId,
+        schemaVersion: 1 as const,
+        platform: 'community-platform' as const,
+      },
+      destinationScript: ownerScript,
+    };
+
+    function buildAdapter(options: {
+      walletNetwork: 'mainnet' | 'testnet';
+      allowMainnetMint: boolean;
+      onInscribe: () => void;
+    }) {
+      return new YoursWalletAdapter({
+        brc100Wallet: createSimulatedBrc100Substrate({
+          seedLabel: `mainnet-guard-${options.walletNetwork}`,
+          version: 'yours-3.0.0',
+          network: options.walletNetwork,
+        }),
+        appMode: 'live',
+        expectedNetwork: 'main',
+        allowSimulatedLiveMint: true,
+        allowMainnetMint: options.allowMainnetMint,
+        envSource: { BSV_NETWORK: 'main', ALLOW_MAINNET_BROADCAST: 'false' },
+        customInscribeAction: async (_ctx, input) => {
+          options.onInscribe();
+          const tx = new Transaction();
+          tx.addOutput({
+            satoshis: 1,
+            lockingScript: buildInscriptionScript(
+              LockingScript.fromHex(String(input.destination?.lockingScript ?? '')),
+              Buffer.from(input.base64Content, 'base64'),
+              input.contentType,
+              input.map
+            ),
+          });
+          return { txid: tx.id('hex'), tx: tx.toBinary() };
+        },
+      });
+    }
+
+    // Mainnet without explicit approval: refused before the wallet is asked to sign anything
+    let inscribeCalls = 0;
+    const unapproved = buildAdapter({
+      walletNetwork: 'mainnet',
+      allowMainnetMint: false,
+      onInscribe: () => inscribeCalls++,
+    });
+    await unapproved.connect();
+    await expect(unapproved.mintOrdinal(metadataInput)).rejects.toMatchObject({
+      code: 'MAINNET_MINT_FORBIDDEN',
+    });
+
+    // Approved mainnet, but the wallet is on testnet: refused as a network mismatch before signing
+    const wrongNetwork = buildAdapter({
+      walletNetwork: 'testnet',
+      allowMainnetMint: true,
+      onInscribe: () => inscribeCalls++,
+    });
+    await wrongNetwork.connect();
+    await expect(wrongNetwork.mintOrdinal(metadataInput)).rejects.toMatchObject({
+      code: 'NETWORK_MISMATCH',
+    });
+    expect(inscribeCalls).toBe(0);
+
+    // Approved mainnet with a mainnet wallet: the mint proceeds
+    const approved = buildAdapter({
+      walletNetwork: 'mainnet',
+      allowMainnetMint: true,
+      onInscribe: () => inscribeCalls++,
+    });
+    await approved.connect();
+    const minted = await approved.mintOrdinal(metadataInput);
+    expect(inscribeCalls).toBe(1);
+    expect(minted.vout).toBe(0);
+    expect(minted.isMock).toBe(false);
+  });
 });

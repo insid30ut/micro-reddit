@@ -139,16 +139,20 @@ function buildRegistryEnv(config: {
   appMode: 'mock' | 'live';
   bsvNetwork: 'main' | 'test';
   mockPersona: MockPersonaId;
+  allowMainnetBroadcast?: boolean;
 }): WalletRegistryEnvironment {
+  const allowMainnetMint = config.allowMainnetBroadcast === true;
   return {
     appMode: config.appMode,
     yoursOptions: {
       appMode: config.appMode,
       expectedNetwork: config.bsvNetwork,
+      allowMainnetMint,
     },
     handcashOptions: {
       appMode: config.appMode,
       expectedNetwork: config.bsvNetwork,
+      allowMainnetMint,
     },
     mockOptions: {
       persona: config.mockPersona,
@@ -171,12 +175,15 @@ export interface AppWalletProviderProps {
   children: React.ReactNode;
   appMode?: 'mock' | 'live';
   bsvNetwork?: 'main' | 'test';
+  /** Server-approved mainnet broadcasting (APP_MODE=live, BSV_NETWORK=main, ALLOW_MAINNET_BROADCAST=true) */
+  allowMainnetBroadcast?: boolean;
 }
 
 export function AppWalletProvider({
   children,
   appMode: initialAppMode = 'mock',
   bsvNetwork: initialBsvNetwork = 'test',
+  allowMainnetBroadcast = false,
 }: AppWalletProviderProps) {
   const [appMode, setAppMode] = useState<'mock' | 'live'>(initialAppMode);
   const [bsvNetwork, setBsvNetwork] = useState<'main' | 'test'>(
@@ -221,8 +228,9 @@ export function AppWalletProvider({
     appMode,
     bsvNetwork,
     mockPersona,
+    allowMainnetBroadcast,
   });
-  runtimeRef.current = { appMode, bsvNetwork, mockPersona };
+  runtimeRef.current = { appMode, bsvNetwork, mockPersona, allowMainnetBroadcast };
 
   const initializedRef = useRef(false);
 
@@ -432,6 +440,7 @@ export function AppWalletProvider({
             appMode: runtimeRef.current.appMode,
             bsvNetwork: runtimeRef.current.bsvNetwork,
             mockPersona: effectivePersona,
+            allowMainnetBroadcast: runtimeRef.current.allowMainnetBroadcast,
           })
         );
 

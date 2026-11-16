@@ -75,11 +75,11 @@ Local development keeps mock mode (`APP_MODE="mock"`) and the local database fal
 | Yours (BRC-100 `window.CWI` primary & `window.yours` legacy auth-only fallback) | Implemented end-to-end (explicit selection via `AppWalletProvider`, BRC-42 `deriveDestination()`, live `@1sat/actions` `inscribe` minting on `window.CWI`, multi-output `vout` extraction). **Automated tests run against simulated `ProtoWallet`/BSM fixtures; manual test checklist against the real browser extension is documented in `docs/TEST_PLAN.md`.** |
 | HandCash Desktop BRC Wallet (`https://127.0.0.1:2121` / `http://127.0.0.1:3321`) | Implemented end-to-end (ordered HTTP bridge probing, `getVersion` `'handcash'` enforcement, `AppWalletProvider`, BRC-42 `deriveDestination()`, live `createAction` + `signAction` 1Sat Ordinal minting via `@1sat/templates`, multi-output `vout` extraction). **Automated tests run against simulated BRC-100 substrates; manual test checklist against HandCash Desktop is documented in `docs/TEST_PLAN.md`. HandCash Mobile alone is not supported (requires Desktop BRC-100 HTTP bridge).** |
 
-Automated tests prove our adapters, destination proof verification, transaction output parsing, and server verification logic are self-consistent; final real-wallet confirmation still requires executing the manual browser checklist in `docs/TEST_PLAN.md` on `BSV_NETWORK="test"`.
+Automated tests prove our adapters, destination proof verification, transaction output parsing, and server verification logic are self-consistent; final real-wallet confirmation still requires executing the manual browser checklist in `docs/TEST_PLAN.md` on mainnet (`BSV_NETWORK="main"`, with `ALLOW_MAINNET_BROADCAST="true"` for live minting).
 
 Design notes:
 - Providers are always selected explicitly via `AppWalletProvider` (`src/context/wallet-context.tsx`) — never `WalletClient('auto')` or `@1sat/react`'s auto-racing `connectWallet()`, and vendor-version checks reject mismatched providers (`PROVIDER_MISMATCH`).
-- Server-enforced network: the server enforces its configured `BSV_NETWORK` (`'main' | 'test'`) and rejects any client-supplied network mismatch (`400 NETWORK_MISMATCH`). Mainnet minting stays blocked unless `ALLOW_MAINNET_MINT=true` is explicitly authorized.
+- Server-enforced network: the server enforces its configured `BSV_NETWORK` (`'main' | 'test'`) and rejects any client-supplied network mismatch (`400 NETWORK_MISMATCH`). Mainnet minting stays blocked unless `APP_MODE="live"`, `BSV_NETWORK="main"` and `ALLOW_MAINNET_BROADCAST="true"` are all set, and the browser checks that the wallet's network matches the server's before anything is signed.
 - Separation of identity keys and payment keys: BRC-100 `identityKey` is NEVER used as a payout script. Clients must explicitly run `deriveDestination()` (deriving a separate BRC-42 child payment key) and submit a cryptographic `destinationProof` verified via `/api/auth/verify`, `/api/wallets/connect`, or `/api/wallets/destination`. Initial community ownership (`Community.currentOwnerScript`) remains strictly authoritative from the verified on-chain locking script of the actual minted 1Sat Ordinal output.
 
 ## Quick start
@@ -89,7 +89,7 @@ Design notes:
 3. `npm run db:generate` and `npm run db:validate`
 4. Apply migrations: `npx prisma migrate deploy`
 5. `npm run typecheck` and `npm test`
-6. `npm run dev` (mock mode by default; set `BSV_NETWORK="test"` and follow `docs/TEST_PLAN.md` for live wallet testing)
+6. `npm run dev` (mock mode by default; for live wallet testing on mainnet follow `docs/TEST_PLAN.md`)
 
 ### Running the real-PostgreSQL integration tests
 
@@ -97,7 +97,7 @@ Design notes:
 
 ## Remaining limitations
 
-- Automated tests cannot launch the real Yours Chrome extension or HandCash Desktop native app; follow the manual testnet verification checklists in `docs/TEST_PLAN.md`.
+- Automated tests cannot launch the real Yours Chrome extension or HandCash Desktop native app; follow the manual mainnet verification checklists in `docs/TEST_PLAN.md`.
 - HandCash Mobile lacks a local BRC-100 HTTP bridge and cannot perform BRC-100 desktop signing/minting directly without HandCash Desktop.
 - Phases 4 (transfer indexing) and 5 (`sendOutputs` 70/30 payments) are outside this phase.
 - No rate limiting on `/api/auth/*`; no periodic cleanup of expired challenges/sessions.

@@ -642,7 +642,9 @@ export class YoursWalletAdapter implements WalletAdapter {
     const minter = new OneSatMintingAdapter({
       wallet: this.activeBrc100Wallet,
       provider: 'yours',
-      network: this.cachedIdentity.network,
+      // Server-enforced network: if the wallet reports a different network, the minting
+      // adapter rejects with NETWORK_MISMATCH before anything is signed or broadcast.
+      network: this.options.expectedNetwork ?? this.cachedIdentity.network,
       ...(this.options.appMode ? { appMode: this.options.appMode } : {}),
       ...(this.options.allowSimulatedLiveMint !== undefined
         ? { allowSimulatedLiveMint: this.options.allowSimulatedLiveMint }
