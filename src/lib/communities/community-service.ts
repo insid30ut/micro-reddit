@@ -13,6 +13,7 @@ import {
   normalizeCommunitySlug,
 } from '@/lib/communities/slug';
 import { prisma } from '@/lib/database/prisma';
+import { isValidHttpOrHttpsUrl } from '@/lib/ordinals/metadata';
 import type { CommunityNftSummary, CommunityRecord } from '@/types/community';
 
 export { COMMUNITY_SLUG_REGEX, normalizeCommunitySlug };
@@ -40,7 +41,14 @@ export const CreateCommunitySchema = z.object({
     .max(2000, 'Community description cannot exceed 2000 characters.'),
   artworkUrl: z
     .union([
-      z.string().trim().url('Artwork URL must be a valid URL.').max(2048),
+      z
+        .string()
+        .trim()
+        .max(2048, 'Artwork URL cannot exceed 2048 characters.')
+        .refine(
+          (val) => isValidHttpOrHttpsUrl(val),
+          'Artwork URL must be a valid http:// or https:// URL.'
+        ),
       z.literal(''),
       z.null(),
     ])

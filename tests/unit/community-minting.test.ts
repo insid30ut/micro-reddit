@@ -1014,4 +1014,145 @@ describe('Phase 3 — Community Creation, Deterministic 1Sat Metadata & Independ
       code: 'MINT_TX_OUTPUT_UNVERIFIABLE',
     });
   });
+
+  it('15. Blocks a second mint while the first is unconfirmed, rejects a different origin, and keeps one genesis ownership event', async () => {
+    const aliceAuth = await authenticateMockPersona('alice');
+    const community = await communityService.createCommunity({
+      authenticatedUserId: aliceAuth.user.id,
+      input: {
+        name: 'Single NFT Community',
+        slug: 'single-nft-community',
+        description: 'A community must never end up with two NFTs.',
+      },
+    });
+    const ownerScript = '76a914aabbccddeeff00112233445566778899aabbccdd88ac';
+
+    // First mint lands in the mempool only (0 confirmations)
+    const first = await mintVerificationService.mintAndVerifyCommunityNft({
+      communitySlugOrId: community.slug,
+      authenticatedUserId: aliceAuth.user.id,
+      destinationP2PKHScript: ownerScript,
+      simulatedConfirmations: 0,
+    });
+    expect(first.nft.mintStatus).toBe('MINTED');
+    expect(first.community.status).toBe('PENDING_MINT');
+
+    // A new mint intent and a new mint are both refused while the first is pending
+    await expect(
+      mintVerificationService.prepareMintIntent({
+        communitySlugOrId: community.slug,
+        authenticatedUserId: aliceAuth.user.id,
+      })
+    ).rejects.toMatchObject({ code: 'MINT_ALREADY_PENDING', statusCode: 409 });
+    await expect(
+      mintVerificationService.mintAndVerifyCommunityNft({
+        communitySlugOrId: community.slug,
+        authenticatedUserId: aliceAuth.user.id,
+        destinationP2PKHScript: ownerScript,
+      })
+    ).rejects.toMatchObject({ code: 'MINT_ALREADY_PENDING', statusCode: 409 });
+
+    // A second, otherwise valid, inscription for the same community cannot replace the first origin
+    const secondInscription = await mockMinter.mintCommunityOrdinal({
+      communityId: community.id,
+      name: community.name,
+      description: community.description,
+      artworkUrl: community.artworkUrl,
+      destinationP2PKHScript: '76a914112233445566778899aabbccddeeff001122334488ac',
+      network: 'main',
+      simulatedConfirmations: 1,
+    });
+    expect(secondInscription.origin).not.toBe(first.nft.origin);
+    await expect(
+      mintVerificationService.verifySubmittedMintTransaction({
+        communitySlugOrId: community.slug,
+        authenticatedUserId: aliceAuth.user.id,
+        txid: secondInscription.txid,
+        vout: secondInscription.vout,
+      })
+    ).rejects.toMatchObject({ code: 'MINT_ALREADY_PENDING', statusCode: 409 });
+
+    const nftAfterReject = await prisma.communityNFT.findUniqueOrThrow({
+      where: { communityId: community.id },
+    });
+    expect(nftAfterReject.origin).toBe(first.nft.origin);
+
+    // Re-checking the same unconfirmed mint (polling) does not append duplicate genesis events
+    await mintVerificationService.verifySubmittedMintTransaction({
+      communitySlugOrId: community.slug,
+      authenticatedUserId: aliceAuth.user.id,
+      txid: first.nft.originTxid,
+      vout: first.nft.originVout,
+    });
+
+    // The original mint confirms and activates the community
+    chainStore.registerTransaction({
+      txid: first.nft.originTxid,
+      network: 'main',
+      outputs: [
+        {
+          vout: first.nft.originVout,
+          satoshis: 1,
+          lockingScriptHex: first.nft.rawOutputScript ?? '',
+        },
+      ],
+      blockHeight: 881_300,
+      confirmations: 1,
+      isMock: true,
+    });
+    const confirmed = await mintVerificationService.verifySubmittedMintTransaction({
+      communitySlugOrId: community.slug,
+      authenticatedUserId: aliceAuth.user.id,
+      txid: first.nft.originTxid,
+      vout: first.nft.originVout,
+    });
+    expect(confirmed.community.status).toBe('ACTIVE');
+    expect(confirmed.nft.origin).toBe(first.nft.origin);
+
+    const genesisEvents = await prisma.ownershipEvent.findMany({
+      where: { communityId: community.id },
+    });
+    expect(genesisEvents).toHaveLength(1);
+    expect(genesisEvents[0]?.confirmationStatus).toBe('CONFIRMED');
+    expect(genesisEvents[0]?.blockHeight).toBe(881_300);
+  });
+
+  it('16. Rejects non-http(s) artwork URLs at creation so every stored community can be minted', async () => {
+    const aliceAuth = await authenticateMockPersona('alice');
+
+    for (const [index, artworkUrl] of [
+      'ftp://example.com/art.png',
+      'javascript:alert(1)',
+      'data:image/png;base64,AAAA',
+    ].entries()) {
+      await expect(
+        communityService.createCommunity({
+          authenticatedUserId: aliceAuth.user.id,
+          input: {
+            name: `Bad Artwork ${index}`,
+            slug: `bad-artwork-${index}`,
+            description: 'Artwork links must be plain http(s) URLs.',
+            artworkUrl,
+          },
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_COMMUNITY_INPUT', statusCode: 400 });
+    }
+
+    const created = await communityService.createCommunity({
+      authenticatedUserId: aliceAuth.user.id,
+      input: {
+        name: 'Good Artwork',
+        slug: 'good-artwork',
+        description: 'Artwork links must be plain http(s) URLs.',
+        artworkUrl: 'https://example.com/art.png',
+      },
+    });
+    const intent = await mintVerificationService.prepareMintIntent({
+      communitySlugOrId: created.slug,
+      authenticatedUserId: aliceAuth.user.id,
+    });
+    expect(intent.serializedMetadata.metadata.artworkUrl).toBe(
+      'https://example.com/art.png'
+    );
+  });
 });

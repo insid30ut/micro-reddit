@@ -123,6 +123,19 @@ export default async function CommunityDetailsPage(props: {
             }
             canonicalMetadataJson={serializedMetadata.canonicalJson}
             contentSha256Hex={serializedMetadata.contentSha256Hex}
+            pendingMint={
+              community.nft &&
+              community.nft.mintStatus !== 'VERIFIED' &&
+              community.nft.mintStatus !== 'FAILED'
+                ? {
+                    origin: community.nft.origin,
+                    originTxid: community.nft.originTxid,
+                    originVout: community.nft.originVout,
+                    mintStatus: community.nft.mintStatus,
+                    confirmationStatus: community.nft.confirmationStatus,
+                  }
+                : null
+            }
           />
         </div>
       )}

@@ -3,7 +3,11 @@ import type { CommunityNftMetadataV1 } from '@/types/community';
 
 export const COMMUNITY_NFT_METADATA_MIME_TYPE = 'application/json';
 
-function isValidHttpOrHttpsUrl(value: string): boolean {
+/**
+ * Artwork links must be plain http(s) URLs (max 2048 chars). Shared by community creation
+ * and NFT metadata validation so a stored community can always be serialized and minted.
+ */
+export function isValidHttpOrHttpsUrl(value: string): boolean {
   if (value.length === 0 || value.length > 2048) {
     return false;
   }

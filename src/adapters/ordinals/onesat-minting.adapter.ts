@@ -69,15 +69,53 @@ export interface OneSatMintingAdapterOptions {
  * Live 1Sat Stack transaction lookup provider using `@1sat/client` (`OneSatServices`).
  * Retrieves raw transaction bytes via BeefClient / TxoClient to verify outputs and confirmations.
  */
+/** Subset of `OneSatServices` used for transaction lookup (injectable for tests). */
+export interface OneSatLookupServices {
+  beef: Pick<OneSatServices['beef'], 'getRawTx'>;
+  txo: Pick<OneSatServices['txo'], 'getByTxid'>;
+  getHeight: OneSatServices['getHeight'];
+}
+
 export class OneSatTransactionLookupProvider implements MintTransactionLookupProvider {
-  private readonly services: OneSatServices;
+  private readonly services: OneSatLookupServices;
   private readonly configuredNetwork: 'main' | 'test';
 
-  constructor(options?: { apiBaseUrl?: string; network?: 'main' | 'test' }) {
+  constructor(options?: {
+    apiBaseUrl?: string;
+    network?: 'main' | 'test';
+    /** Test-only override for the 1Sat Stack client */
+    services?: OneSatLookupServices;
+  }) {
     const env = parseAppEnv();
     const network = options?.network ?? env.BSV_NETWORK;
     this.configuredNetwork = network;
-    this.services = new OneSatServices(network, options?.apiBaseUrl ?? env.ONESAT_API_BASE_URL);
+    this.services =
+      options?.services ??
+      new OneSatServices(network, options?.apiBaseUrl ?? env.ONESAT_API_BASE_URL);
+  }
+
+  /**
+   * Counts confirmations from the indexer's chain tip. Fails closed: if the tip height is
+   * unavailable or inconsistent with the block height, reports 0 confirmations instead of
+   * guessing, so callers treat the transaction as unconfirmed and can retry later.
+   */
+  private async countConfirmations(blockHeight: number | null): Promise<number> {
+    if (blockHeight === null) {
+      return 0;
+    }
+    try {
+      const tipHeight = await this.services.getHeight();
+      if (
+        typeof tipHeight === 'number' &&
+        Number.isInteger(tipHeight) &&
+        tipHeight >= blockHeight
+      ) {
+        return tipHeight - blockHeight + 1;
+      }
+      return 0;
+    } catch {
+      return 0;
+    }
   }
 
   public async getTransaction(
@@ -96,6 +134,25 @@ export class OneSatTransactionLookupProvider implements MintTransactionLookupPro
     try {
       const rawBytes = await this.services.beef.getRawTx(normalizedTxid);
       const tx = Transaction.fromBinary(Array.from(rawBytes));
+
+      // Never trust that the indexer returned the transaction we asked for.
+      if (tx.id('hex').toLowerCase() !== normalizedTxid) {
+        return null;
+      }
+
+      // Every output amount must be present in the raw transaction; never assume a value.
+      const outputs: ObservedChainTransactionOutput[] = [];
+      for (const [vout, out] of tx.outputs.entries()) {
+        if (typeof out.satoshis !== 'number' || !Number.isInteger(out.satoshis)) {
+          return null;
+        }
+        outputs.push({
+          vout,
+          satoshis: out.satoshis,
+          lockingScriptHex: out.lockingScript.toHex().toLowerCase(),
+        });
+      }
+
       const txOutputs = await this.services.txo.getByTxid(normalizedTxid, {
         block: true,
         sats: true,
@@ -107,30 +164,12 @@ export class OneSatTransactionLookupProvider implements MintTransactionLookupPro
           ? firstIndexed.blockHeight
           : null;
 
-      let confirmations = 0;
-      if (blockHeight !== null) {
-        try {
-          const tipHeight = await this.services.getHeight();
-          if (typeof tipHeight === 'number' && tipHeight >= blockHeight) {
-            confirmations = tipHeight - blockHeight + 1;
-          } else {
-            confirmations = 1;
-          }
-        } catch {
-          confirmations = 1;
-        }
-      }
-
       return {
         txid: normalizedTxid,
         network: this.configuredNetwork,
-        outputs: tx.outputs.map((out, vout) => ({
-          vout,
-          satoshis: out.satoshis ?? 1,
-          lockingScriptHex: out.lockingScript.toHex().toLowerCase(),
-        })),
+        outputs,
         blockHeight,
-        confirmations,
+        confirmations: await this.countConfirmations(blockHeight),
         isMock: false,
       };
     } catch {

@@ -36,6 +36,7 @@ export type MintVerificationErrorCode =
   | 'FORBIDDEN_NOT_CREATOR'
   | 'COMMUNITY_NOT_FOUND'
   | 'DUPLICATE_MINT_REJECTED'
+  | 'MINT_ALREADY_PENDING'
   | 'DUPLICATE_NFT_ORIGIN'
   | 'INVALID_DESTINATION_SCRIPT'
   | 'MINT_TX_NOT_FOUND'
@@ -46,6 +47,16 @@ export type MintVerificationErrorCode =
   | 'MINT_INVALID_METADATA'
   | 'MINT_ORIGIN_MISMATCH'
   | 'MINT_UNROUTABLE_LOCKING_SCRIPT';
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === 'P2002';
+  }
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return (error as { code?: unknown }).code === 'P2002';
+  }
+  return false;
+}
 
 export class MintVerificationError extends Error {
   public readonly code: MintVerificationErrorCode;
@@ -134,6 +145,23 @@ export class MintVerificationService {
     return parseAppEnv(this.envSource).BSV_NETWORK;
   }
 
+  /**
+   * Each community receives exactly one NFT. Once a mint transaction has been recorded
+   * (even if it is still awaiting confirmations), a new mint must not be started: the
+   * caller should re-verify the existing transaction instead.
+   */
+  private assertNoPendingMint(
+    nft: { origin: string; mintStatus: string } | null | undefined
+  ): void {
+    if (nft && nft.mintStatus !== 'FAILED') {
+      throw new MintVerificationError(
+        'MINT_ALREADY_PENDING',
+        `This community already has a minted NFT (${nft.origin}) awaiting confirmation. Re-check that transaction instead of minting again.`,
+        409
+      );
+    }
+  }
+
   private async resolveCommunityRow(slugOrId: string) {
     const trimmed = slugOrId.trim();
     const normalizedSlug = normalizeCommunitySlug(trimmed);
@@ -218,6 +246,8 @@ export class MintVerificationService {
       );
     }
 
+    this.assertNoPendingMint(communityRow.nft);
+
     const serializedMetadata = serializeCommunityNftMetadataDeterministically({
       communityId: communityRow.id,
       name: communityRow.name,
@@ -279,6 +309,8 @@ export class MintVerificationService {
         409
       );
     }
+
+    this.assertNoPendingMint(communityRow.nft);
 
     // Resolve destination P2PKH script from explicit parameter or from the creator's connected wallet
     let destinationScript = input.destinationP2PKHScript?.trim().toLowerCase();
@@ -402,7 +434,9 @@ export class MintVerificationService {
       throw new MintVerificationError(
         reason,
         message,
-        reason === 'DUPLICATE_NFT_ORIGIN' ? 409 : 422
+        reason === 'DUPLICATE_NFT_ORIGIN' || reason === 'MINT_ALREADY_PENDING'
+          ? 409
+          : 422
       );
     };
 
@@ -445,6 +479,20 @@ export class MintVerificationService {
       return recordVerificationFailure(
         'DUPLICATE_NFT_ORIGIN',
         `Ordinal origin "${computedOrigin}" is already registered to another community.`
+      );
+    }
+
+    // 1b. One NFT per community: while a recorded mint awaits confirmation, only that
+    // same origin may be re-verified. A different txid/vout would replace the NFT identity.
+    if (
+      communityRow.nft &&
+      communityRow.nft.mintStatus !== 'FAILED' &&
+      communityRow.nft.origin !== computedOrigin
+    ) {
+      return recordVerificationFailure(
+        'MINT_ALREADY_PENDING',
+        `This community already has a minted NFT (${communityRow.nft.origin}) awaiting confirmation; a different mint (${computedOrigin}) cannot replace it.`,
+        { pendingOrigin: communityRow.nft.origin }
       );
     }
 
@@ -563,126 +611,159 @@ export class MintVerificationService {
     const mintStatus = isConfirmed ? 'VERIFIED' : 'MINTED';
 
     // Persist verified NFT, initial ownership event, and community activation atomically
-    const outcome = await this.prisma.$transaction(async (tx) => {
-      // Optional platform wallet association if a registered WalletConnection has this exact payout script
-      const matchedWallet = await tx.walletConnection.findFirst({
-        where: {
-          currentPayoutScript: authoritativeOwnerScript,
-        },
-        orderBy: { lastAuthenticatedAt: 'desc' },
-      });
+    let outcome;
+    try {
+      outcome = await this.prisma.$transaction(async (tx) => {
+        // Optional platform wallet association if a registered WalletConnection has this exact payout script
+        const matchedWallet = await tx.walletConnection.findFirst({
+          where: {
+            currentPayoutScript: authoritativeOwnerScript,
+          },
+          orderBy: { lastAuthenticatedAt: 'desc' },
+        });
 
-      const nftRow = communityRow.nft
-        ? await tx.communityNFT.update({
-            where: { id: communityRow.nft.id },
-            data: {
-              originTxid: normalizedTxid,
-              originVout: vout,
-              origin: computedOrigin,
-              currentTxid: normalizedTxid,
-              currentVout: vout,
-              currentOwnerScript: authoritativeOwnerScript,
-              rawOutputScript: parsedScript.rawScriptHex,
-              scriptType: parsedScript.scriptType,
-              isPayoutRoutable: parsedScript.isPayoutRoutable,
-              lastVerifiedBlockHeight: observedTx.blockHeight,
-              lastVerifiedAt: new Date(now.getTime()),
-              confirmationStatus,
-              mintStatus,
-              isMock: observedTx.isMock,
-              updatedAt: new Date(now.getTime()),
+        const nftRow = communityRow.nft
+          ? await tx.communityNFT.update({
+              where: { id: communityRow.nft.id },
+              data: {
+                originTxid: normalizedTxid,
+                originVout: vout,
+                origin: computedOrigin,
+                currentTxid: normalizedTxid,
+                currentVout: vout,
+                currentOwnerScript: authoritativeOwnerScript,
+                rawOutputScript: parsedScript.rawScriptHex,
+                scriptType: parsedScript.scriptType,
+                isPayoutRoutable: parsedScript.isPayoutRoutable,
+                lastVerifiedBlockHeight: observedTx.blockHeight,
+                lastVerifiedAt: new Date(now.getTime()),
+                confirmationStatus,
+                mintStatus,
+                isMock: observedTx.isMock,
+                updatedAt: new Date(now.getTime()),
+              },
+            })
+          : await tx.communityNFT.create({
+              data: {
+                id: randomUUID(),
+                communityId: communityRow.id,
+                protocol: '1sat',
+                originTxid: normalizedTxid,
+                originVout: vout,
+                origin: computedOrigin,
+                currentTxid: normalizedTxid,
+                currentVout: vout,
+                currentOwnerScript: authoritativeOwnerScript,
+                rawOutputScript: parsedScript.rawScriptHex,
+                scriptType: parsedScript.scriptType,
+                isPayoutRoutable: parsedScript.isPayoutRoutable,
+                lastVerifiedBlockHeight: observedTx.blockHeight,
+                lastVerifiedAt: new Date(now.getTime()),
+                confirmationStatus,
+                mintStatus,
+                isMock: observedTx.isMock,
+                createdAt: new Date(now.getTime()),
+                updatedAt: new Date(now.getTime()),
+              },
+            });
+
+        const updatedCommunity = await tx.community.update({
+          where: { id: communityRow.id },
+          data: {
+            nftId: nftRow.id,
+            // Only transition to ACTIVE and set authoritative owner script once confirmation threshold is met
+            ...(isConfirmed
+              ? {
+                  status: 'ACTIVE',
+                  currentOwnerScript: authoritativeOwnerScript,
+                  currentOwnerWalletConnectionId: matchedWallet?.id ?? null,
+                }
+              : {}),
+            updatedAt: new Date(now.getTime()),
+          },
+          include: {
+            nft: true,
+            revenuePolicies: {
+              orderBy: { version: 'desc' },
+              take: 1,
             },
-          })
-        : await tx.communityNFT.create({
+          },
+        });
+
+        // Re-verifying the same mint (e.g. polling for confirmations) updates the single
+        // genesis ownership event instead of appending duplicate "first owner" entries.
+        const existingGenesisEvent = await tx.ownershipEvent.findFirst({
+          where: {
+            nftId: nftRow.id,
+            previousOutpoint: null,
+            newOutpoint: computedOrigin,
+          },
+        });
+        if (existingGenesisEvent) {
+          await tx.ownershipEvent.update({
+            where: { id: existingGenesisEvent.id },
+            data: {
+              blockHeight: observedTx.blockHeight,
+              confirmationStatus,
+            },
+          });
+        } else {
+          await tx.ownershipEvent.create({
             data: {
               id: randomUUID(),
               communityId: communityRow.id,
-              protocol: '1sat',
-              originTxid: normalizedTxid,
-              originVout: vout,
-              origin: computedOrigin,
-              currentTxid: normalizedTxid,
-              currentVout: vout,
-              currentOwnerScript: authoritativeOwnerScript,
-              rawOutputScript: parsedScript.rawScriptHex,
-              scriptType: parsedScript.scriptType,
-              isPayoutRoutable: parsedScript.isPayoutRoutable,
-              lastVerifiedBlockHeight: observedTx.blockHeight,
-              lastVerifiedAt: new Date(now.getTime()),
+              nftId: nftRow.id,
+              previousOwnerScript: null,
+              newOwnerScript: authoritativeOwnerScript,
+              previousOutpoint: null,
+              newOutpoint: computedOrigin,
+              transactionId: normalizedTxid,
+              blockHeight: observedTx.blockHeight,
               confirmationStatus,
-              mintStatus,
-              isMock: observedTx.isMock,
               createdAt: new Date(now.getTime()),
-              updatedAt: new Date(now.getTime()),
             },
           });
+        }
 
-      const updatedCommunity = await tx.community.update({
-        where: { id: communityRow.id },
-        data: {
-          nftId: nftRow.id,
-          // Only transition to ACTIVE and set authoritative owner script once confirmation threshold is met
-          ...(isConfirmed
-            ? {
-                status: 'ACTIVE',
-                currentOwnerScript: authoritativeOwnerScript,
-                currentOwnerWalletConnectionId: matchedWallet?.id ?? null,
-              }
-            : {}),
-          updatedAt: new Date(now.getTime()),
-        },
-        include: {
-          nft: true,
-          revenuePolicies: {
-            orderBy: { version: 'desc' },
-            take: 1,
+        await tx.auditEvent.create({
+          data: {
+            id: randomUUID(),
+            eventType: isConfirmed
+              ? 'COMMUNITY_NFT_MINT_VERIFIED'
+              : 'COMMUNITY_NFT_MINT_OBSERVED_UNCONFIRMED',
+            actorUserId: input.authenticatedUserId ?? null,
+            entityType: 'CommunityNFT',
+            entityId: nftRow.id,
+            details: {
+              communityId: communityRow.id,
+              origin: computedOrigin,
+              currentOwnerScript: authoritativeOwnerScript,
+              scriptType: parsedScript.scriptType,
+              isPayoutRoutable: parsedScript.isPayoutRoutable,
+              confirmations: observedTx.confirmations,
+              confirmationStatus,
+              mintStatus,
+              activated: isConfirmed,
+              isMock: observedTx.isMock,
+            } as Prisma.InputJsonValue,
+            createdAt: new Date(now.getTime()),
           },
-        },
-      });
+        });
 
-      await tx.ownershipEvent.create({
-        data: {
-          id: randomUUID(),
-          communityId: communityRow.id,
-          nftId: nftRow.id,
-          previousOwnerScript: null,
-          newOwnerScript: authoritativeOwnerScript,
-          previousOutpoint: null,
-          newOutpoint: computedOrigin,
-          transactionId: normalizedTxid,
-          blockHeight: observedTx.blockHeight,
-          confirmationStatus,
-          createdAt: new Date(now.getTime()),
-        },
+        return { updatedCommunity, nftRow };
       });
-
-      await tx.auditEvent.create({
-        data: {
-          id: randomUUID(),
-          eventType: isConfirmed
-            ? 'COMMUNITY_NFT_MINT_VERIFIED'
-            : 'COMMUNITY_NFT_MINT_OBSERVED_UNCONFIRMED',
-          actorUserId: input.authenticatedUserId ?? null,
-          entityType: 'CommunityNFT',
-          entityId: nftRow.id,
-          details: {
-            communityId: communityRow.id,
-            origin: computedOrigin,
-            currentOwnerScript: authoritativeOwnerScript,
-            scriptType: parsedScript.scriptType,
-            isPayoutRoutable: parsedScript.isPayoutRoutable,
-            confirmations: observedTx.confirmations,
-            confirmationStatus,
-            mintStatus,
-            activated: isConfirmed,
-            isMock: observedTx.isMock,
-          } as Prisma.InputJsonValue,
-          createdAt: new Date(now.getTime()),
-        },
-      });
-
-      return { updatedCommunity, nftRow };
-    });
+    } catch (error) {
+      // Two concurrent confirmations for the same community race on the unique
+      // CommunityNFT.communityId / origin constraints; fail cleanly instead of a 500.
+      if (isUniqueConstraintError(error)) {
+        throw new MintVerificationError(
+          'DUPLICATE_MINT_REJECTED',
+          'Another mint confirmation for this community was recorded concurrently. Reload and re-check the existing NFT.',
+          409
+        );
+      }
+      throw error;
+    }
 
     return {
       verified: isConfirmed,

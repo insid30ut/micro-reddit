@@ -14,6 +14,25 @@ export interface CommunityMintPanelProps {
   defaultDestinationScript: string | null;
   canonicalMetadataJson: string;
   contentSha256Hex: string;
+  /** A recorded mint that is still awaiting confirmation; new mints are blocked while set. */
+  pendingMint?: {
+    origin: string;
+    originTxid: string;
+    originVout: number;
+    mintStatus: string;
+    confirmationStatus: string;
+  } | null;
+}
+
+function describeMintOutcome(nft: {
+  origin: string;
+  mintStatus: string;
+  confirmationStatus: string;
+}): string {
+  if (nft.mintStatus === 'VERIFIED') {
+    return `Community NFT verified and community activated. Origin: ${nft.origin}.`;
+  }
+  return `Community NFT minted (origin ${nft.origin}) but not yet confirmed (${nft.confirmationStatus}). The community activates once the confirmation threshold is met; use "Re-check confirmations" later.`;
 }
 
 interface MintIntentApiResponse {
@@ -57,6 +76,7 @@ export function CommunityMintPanel({
   defaultDestinationScript,
   canonicalMetadataJson,
   contentSha256Hex,
+  pendingMint = null,
 }: CommunityMintPanelProps) {
   const router = useRouter();
   const {
@@ -167,9 +187,7 @@ export function CommunityMintPanel({
         );
       }
 
-      setPanelSuccess(
-        `Community NFT minted and verified! Origin: ${confirmPayload.nft.origin} (mintStatus: ${confirmPayload.nft.mintStatus}, confirmation: ${confirmPayload.nft.confirmationStatus}).`
-      );
+      setPanelSuccess(describeMintOutcome(confirmPayload.nft));
       setMintStep(null);
       router.refresh();
     } catch (err) {
@@ -222,6 +240,41 @@ export function CommunityMintPanel({
     }
   }
 
+  async function handleRecheckPendingMint() {
+    if (!pendingMint) {
+      return;
+    }
+    setSubmitting(true);
+    setPanelError(null);
+    setPanelSuccess(null);
+
+    try {
+      const res = await fetch(`/api/communities/${slug}/nft/confirm-mint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          action: 'verify-tx',
+          txid: pendingMint.originTxid,
+          vout: pendingMint.originVout,
+          expectedOrigin: pendingMint.origin,
+        }),
+      });
+      const payload = (await res.json()) as ConfirmMintApiResponse;
+      if (!res.ok || !payload.nft) {
+        throw new Error(payload.message ?? 'Re-checking the mint transaction failed.');
+      }
+      setPanelSuccess(describeMintOutcome(payload.nft));
+      router.refresh();
+    } catch (err) {
+      setPanelError(
+        err instanceof Error ? err.message : 'Re-checking the mint transaction failed.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleVerifyExistingTx(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -249,9 +302,7 @@ export function CommunityMintPanel({
         throw new Error(payload.message ?? 'Transaction verification failed.');
       }
 
-      setPanelSuccess(
-        `Verified on-chain Community NFT! Origin: ${payload.nft.origin} (mintStatus: ${payload.nft.mintStatus}, confirmation: ${payload.nft.confirmationStatus}).`
-      );
+      setPanelSuccess(describeMintOutcome(payload.nft));
       router.refresh();
     } catch (err) {
       setPanelError(
@@ -387,7 +438,32 @@ export function CommunityMintPanel({
         </pre>
       </details>
 
-      {isCreator && communityStatus !== 'ACTIVE' && (
+      {isCreator && communityStatus !== 'ACTIVE' && pendingMint && (
+        <div className="mt-5 rounded-lg border border-sky-500/30 bg-sky-950/20 p-4">
+          <h3 className="text-sm font-semibold text-white">
+            Mint recorded &mdash; awaiting confirmation
+          </h3>
+          <p className="mt-1 text-xs text-slate-400">
+            This community already has a minted NFT. Minting again would create a
+            second NFT, so it is disabled. The community activates once this
+            transaction reaches the confirmation threshold.
+          </p>
+          <p className="mt-2 break-all font-mono text-[11px] text-slate-300">
+            Origin: {pendingMint.origin} &bull; {pendingMint.mintStatus} /{' '}
+            {pendingMint.confirmationStatus}
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleRecheckPendingMint()}
+            disabled={submitting}
+            className="mt-3 rounded-lg border border-sky-500/40 bg-sky-500/15 px-4 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25 disabled:opacity-50"
+          >
+            {submitting ? 'Checking...' : 'Re-check confirmations'}
+          </button>
+        </div>
+      )}
+
+      {isCreator && communityStatus !== 'ACTIVE' && !pendingMint && (
         <div className="mt-5 space-y-5">
           {/* Live BRC-100 Wallet Mint Section */}
           {appMode === 'live' && (
