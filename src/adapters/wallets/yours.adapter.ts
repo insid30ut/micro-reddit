@@ -92,6 +92,8 @@ export interface YoursWalletAdapterOptions {
   ) => Promise<InscribeResponse>;
   /** Optional env override */
   envSource?: Record<string, string | undefined>;
+  /** How long to wait for the extension to inject window.CWI (defaults to YOURS_CWI_INJECTION_WAIT_MS) */
+  cwiInjectionWaitMs?: number;
 }
 
 function getBrowserYoursExtension(): YoursInjectedExtension | undefined {
@@ -114,17 +116,45 @@ function hasBrowserWindowCWI(): boolean {
   return typeof win.CWI === 'object' && win.CWI !== null;
 }
 
-function isYoursCompatibleVersion(version: string): boolean {
-  const lower = version.trim().toLowerCase();
-  if (lower.startsWith('handcash')) {
+/**
+ * How long connect()/isAvailable() wait for the Yours extension to inject `window.CWI`.
+ * Extensions inject asynchronously, so a page that checks immediately on load can miss it.
+ */
+export const YOURS_CWI_INJECTION_WAIT_MS = 1500;
+const YOURS_CWI_POLL_INTERVAL_MS = 100;
+
+async function waitForBrowserWindowCWI(timeoutMs: number): Promise<boolean> {
+  if (hasBrowserWindowCWI()) {
+    return true;
+  }
+  if (typeof window === 'undefined' || timeoutMs <= 0) {
     return false;
   }
-  return (
-    lower.startsWith('yours') ||
-    lower.startsWith('1sat') ||
-    lower.startsWith('babbage') ||
-    lower.startsWith('cwi')
-  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, YOURS_CWI_POLL_INTERVAL_MS));
+    if (hasBrowserWindowCWI()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Accepts the BRC-100 wallet behind `window.CWI` unless it identifies itself as HandCash.
+ *
+ * BRC-100 `getVersion()` strings are vendor-defined and the exact string the Yours
+ * extension reports is not documented, so an allowlist of guessed prefixes risks
+ * rejecting the real wallet. `window.CWI` is only injected by a browser extension, and
+ * the user explicitly chose "Connect Yours Wallet", so we only refuse a wallet that
+ * explicitly reports a different known vendor. The reported version is shown in the UI.
+ */
+export function isYoursCompatibleVersion(version: string): boolean {
+  const lower = version.trim().toLowerCase();
+  if (lower.length === 0) {
+    return false;
+  }
+  return !lower.startsWith('handcash');
 }
 
 /**
@@ -146,7 +176,8 @@ function isYoursCompatibleVersion(version: string): boolean {
  * Supports:
  * 1. Primary: BRC-100 `window.CWI` substrate (`new WalletClient('window.CWI', originator)`),
  *    supporting authentication (`canAuthenticate`), derived destination proofs, and 1Sat
- *    Ordinal minting (`canMintOrdinal: true`). Rejects HandCash (`PROVIDER_MISMATCH`).
+ *    Ordinal minting (`canMintOrdinal: true`). Rejects a wallet reporting a HandCash
+ *    version (`PROVIDER_MISMATCH`).
  * 2. Compatibility Fallback: Injected legacy `window.yours` extension (`connect`, `getPubKeys`,
  *    `signMessage` BSM), strictly marked as authentication-only (`canMintOrdinal: false`).
  */
@@ -229,7 +260,12 @@ export class YoursWalletAdapter implements WalletAdapter {
         return false;
       }
     }
-    if (!this.options.preferLegacyExtension && hasBrowserWindowCWI()) {
+    if (
+      !this.options.preferLegacyExtension &&
+      (await waitForBrowserWindowCWI(
+        this.options.cwiInjectionWaitMs ?? YOURS_CWI_INJECTION_WAIT_MS
+      ))
+    ) {
       try {
         const cwiClient = new WalletClient('window.CWI', this.options.originator);
         const { version } = await cwiClient.getVersion({});
@@ -250,7 +286,9 @@ export class YoursWalletAdapter implements WalletAdapter {
       this.options.preferLegacyExtension
         ? null
         : (this.options.brc100Wallet ??
-          (hasBrowserWindowCWI()
+          ((await waitForBrowserWindowCWI(
+            this.options.cwiInjectionWaitMs ?? YOURS_CWI_INJECTION_WAIT_MS
+          ))
             ? new WalletClient('window.CWI', this.options.originator)
             : null));
 
@@ -261,7 +299,7 @@ export class YoursWalletAdapter implements WalletAdapter {
           throw new WalletConnectionError(
             'yours',
             'PROVIDER_MISMATCH',
-            `Explicit Yours Wallet connection refused provider with version "${version}". Please select the matching wallet provider.`
+            `The wallet answering on window.CWI identifies as "${version}", not Yours Wallet. Disable other BRC-100 wallet extensions in this browser and retry.`
           );
         }
 

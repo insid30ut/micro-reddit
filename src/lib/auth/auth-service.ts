@@ -11,6 +11,7 @@ import type {
   WalletDestinationProof,
   WalletProviderType,
 } from '@/types/wallet';
+import { isWalletProviderEnabled } from '@/lib/config/wallet-providers';
 import { prisma } from '@/lib/database/prisma';
 import {
   AuthChallengeError,
@@ -36,6 +37,7 @@ export type WalletAuthErrorCode =
   | 'CHALLENGE_REUSED'
   | 'DOMAIN_MISMATCH'
   | 'PROVIDER_MISMATCH'
+  | 'PROVIDER_DISABLED'
   | 'MOCK_PROVIDER_FORBIDDEN'
   | 'NETWORK_MISMATCH'
   | 'INVALID_PUBLIC_KEY'
@@ -247,7 +249,18 @@ export class WalletAuthService {
     if (provider === 'mock' && this.isLiveMode()) {
       throw new WalletAuthError(
         'MOCK_PROVIDER_FORBIDDEN',
-        'Mock wallet provider is disabled when APP_MODE="live". Connect with Yours Wallet or HandCash.',
+        'Mock wallet provider is disabled when APP_MODE="live". Connect with Yours Wallet.',
+        403
+      );
+    }
+  }
+
+  /** Rejects wallet providers that are switched off (currently HandCash). */
+  private assertProviderEnabled(provider: WalletProviderType): void {
+    if (!isWalletProviderEnabled(provider)) {
+      throw new WalletAuthError(
+        'PROVIDER_DISABLED',
+        `Wallet provider "${provider}" is currently disabled. Connect with Yours Wallet.`,
         403
       );
     }
@@ -286,6 +299,7 @@ export class WalletAuthService {
     ttlMs?: number;
     now?: Date;
   }): Promise<AuthChallengeRecord> {
+    this.assertProviderEnabled(params.provider);
     if (params.provider === 'mock' && this.isLiveMode()) {
       await this.recordAudit(
         'AUTH_CHALLENGE_REJECTED',
@@ -353,6 +367,7 @@ export class WalletAuthService {
   ): Promise<VerifyAuthResult> {
     const now = input.now ?? new Date();
 
+    this.assertProviderEnabled(input.provider);
     if (input.provider === 'mock' && this.isLiveMode()) {
       await this.recordAudit(
         'AUTH_FAILED',
@@ -918,6 +933,7 @@ export class WalletAuthService {
   }): Promise<WalletConnectionRecord> {
     const now = params.now ?? new Date();
     if (params.provider) {
+      this.assertProviderEnabled(params.provider);
       this.assertProviderAllowedInCurrentMode(params.provider);
     }
     const context = await this.getSessionContext(params.sessionToken, now);

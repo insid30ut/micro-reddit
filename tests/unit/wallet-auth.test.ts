@@ -8,6 +8,7 @@ import { POST as walletConnectPostRoute } from '@/app/api/wallets/connect/route'
 import { createTestPGlitePrisma } from '../helpers/pglite-prisma';
 import { MockWalletAdapter } from '../../src/adapters/wallets/mock.adapter.js';
 import {
+  isYoursCompatibleVersion,
   YoursWalletAdapter,
   type YoursInjectedExtension,
 } from '../../src/adapters/wallets/yours.adapter.js';
@@ -291,7 +292,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     expect(verifiedB.activeWallet.identityKey).toBe(yoursExt.identityKeyHex);
   });
 
-  it('2. Succeeds with HandCash BRC-100 authentication (simulated substrate)', async () => {
+  it('2. Rejects HandCash on the server while HandCash is disabled (adapter code retained)', async () => {
     const handcashSub = createBRC100WalletSubstrate({
       seedLabel: 'handcash-brc100-user',
       version: 'handcash-1.4.2',
@@ -300,33 +301,44 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
       brc100Wallet: handcashSub.walletClient,
     });
 
+    // The retained adapter still works against a BRC-100 substrate...
     const conn = await handcashAdapter.connect();
     expect(conn.provider).toBe('handcash');
-    expect(conn.identityKey).toBe(handcashSub.identityKeyHex);
-    expect(conn.version).toBe('handcash-1.4.2');
 
-    const challenge = await authService.issueChallenge({
-      provider: 'handcash',
+    // ...but the server refuses to issue HandCash challenges...
+    await expect(
+      authService.issueChallenge({ provider: 'handcash', domain: appDomain })
+    ).rejects.toMatchObject({ code: 'PROVIDER_DISABLED', statusCode: 403 });
+
+    // ...and refuses to verify a HandCash login even if a challenge id is supplied.
+    const yoursChallenge = await authService.issueChallenge({
+      provider: 'yours',
       domain: appDomain,
     });
+    const sig = await handcashAdapter.signChallenge(yoursChallenge.challengeText);
+    await expect(
+      authService.verifyChallengeAndAuthenticate({
+        challengeId: yoursChallenge.id,
+        provider: 'handcash',
+        publicKey: sig.publicKey,
+        identityKey: conn.identityKey,
+        signature: sig.signature,
+        ...(sig.keyID ? { keyID: sig.keyID } : {}),
+        ...(sig.signatureScheme ? { signatureScheme: sig.signatureScheme } : {}),
+        expectedDomain: appDomain,
+      })
+    ).rejects.toMatchObject({ code: 'PROVIDER_DISABLED', statusCode: 403 });
 
-    const sig = await handcashAdapter.signChallenge(challenge.challengeText);
-    expect(sig.signatureScheme).toBe('brc100');
-
-    const verified = await authService.verifyChallengeAndAuthenticate({
-      challengeId: challenge.id,
-      provider: 'handcash',
-      publicKey: sig.publicKey,
-      identityKey: conn.identityKey,
-      signature: sig.signature,
-      ...(sig.keyID ? { keyID: sig.keyID } : {}),
-      ...(sig.signatureScheme ? { signatureScheme: sig.signatureScheme } : {}),
-      expectedDomain: appDomain,
-    });
-
-    expect(verified.activeWallet.provider).toBe('handcash');
-    expect(verified.activeWallet.identityKey).toBe(handcashSub.identityKeyHex);
-    expect(verified.session.provider).toBe('handcash');
+    // The HTTP route surfaces the same 403.
+    const res = await challengePostRoute(
+      new NextRequest(`http://${appDomain}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', host: appDomain },
+        body: JSON.stringify({ provider: 'handcash' }),
+      })
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('PROVIDER_DISABLED');
   });
 
   it('3. Rejects failed authentication (invalid signature, wrong public key, or domain mismatch)', async () => {
@@ -631,18 +643,18 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     });
     expect(aliceAuth1.wallets).toHaveLength(1);
 
-    // Alice now links her HandCash wallet while authenticated with her existing session token
+    // Alice now links a second Yours wallet while authenticated with her existing session token
     const aliceHandCash = createBRC100WalletSubstrate({
-      seedLabel: 'alice-handcash-wallet',
-      version: 'handcash-1.4.2',
+      seedLabel: 'alice-second-yours-wallet',
+      version: 'yours-2.5.0',
     });
-    const aliceHandCashAdapter = new HandCashWalletAdapter({
+    const aliceHandCashAdapter = new YoursWalletAdapter({
       brc100Wallet: aliceHandCash.walletClient,
     });
     const aliceHandCashConn = await aliceHandCashAdapter.connect();
 
     const challenge2 = await authService.issueChallenge({
-      provider: 'handcash',
+      provider: 'yours',
       domain: appDomain,
       currentSessionToken: aliceAuth1.sessionToken,
     });
@@ -650,7 +662,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
 
     const aliceAuth2 = await authService.verifyChallengeAndAuthenticate({
       challengeId: challenge2.id,
-      provider: 'handcash',
+      provider: 'yours',
       publicKey: sig2.publicKey,
       identityKey: aliceHandCashConn.identityKey,
       signature: sig2.signature,
@@ -662,7 +674,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     expect(aliceAuth2.linkedExistingAccount).toBe(true);
     expect(aliceAuth2.user.id).toBe(aliceAuth1.user.id);
     expect(aliceAuth2.wallets).toHaveLength(2);
-    expect(aliceAuth2.wallets.map((w) => w.provider)).toEqual(['yours', 'handcash']);
+    expect(aliceAuth2.wallets.map((w) => w.provider)).toEqual(['yours', 'yours']);
 
     // Now Bob creates a separate account and tries to link Alice's Yours wallet to Bob's account -> MUST FAIL
     const bobMockAdapter = new MockWalletAdapter({ persona: 'bob' });
@@ -714,7 +726,7 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     }
   });
 
-  it('10. Enforces explicit provider selection when both Yours and HandCash are available and rejects provider mismatch', async () => {
+  it('10. Offers only Yours (plus mock in mock mode) while HandCash is disabled, and Yours rejects a HandCash substrate', async () => {
     const yoursSub = createBRC100WalletSubstrate({
       seedLabel: 'dual-env-yours',
       version: 'yours-2.5.0',
@@ -724,43 +736,31 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
       version: 'handcash-1.4.2',
     });
 
-    // Both wallets are available simultaneously in the environment
+    // Even with a HandCash substrate present, discovery does not offer HandCash
     const discovered = await discoverAvailableWallets({
       appMode: 'mock',
       yoursOptions: { brc100Wallet: yoursSub.walletClient },
       handcashOptions: { brc100Wallet: handcashSub.walletClient },
     });
-    expect(discovered.map((d) => d.provider)).toEqual(['yours', 'handcash', 'mock']);
+    expect(discovered.map((d) => d.provider)).toEqual(['yours', 'mock']);
     expect(discovered.find((d) => d.provider === 'yours')?.available).toBe(true);
-    expect(discovered.find((d) => d.provider === 'handcash')?.available).toBe(true);
 
-    // Explicit choice 1: User selects 'yours' -> connects to Yours Wallet
+    // Explicit 'yours' selection connects to Yours Wallet
     const selectedYours = createExplicitWalletAdapter('yours', {
       yoursOptions: { brc100Wallet: yoursSub.walletClient },
-      handcashOptions: { brc100Wallet: handcashSub.walletClient },
     });
     const yoursIdentity = await selectedYours.connect();
     expect(yoursIdentity.provider).toBe('yours');
     expect(yoursIdentity.identityKey).toBe(yoursSub.identityKeyHex);
 
-    // Explicit choice 2: User selects 'handcash' -> connects to HandCash Wallet
-    const selectedHandCash = createExplicitWalletAdapter('handcash', {
-      yoursOptions: { brc100Wallet: yoursSub.walletClient },
-      handcashOptions: { brc100Wallet: handcashSub.walletClient },
-    });
-    const handcashIdentity = await selectedHandCash.connect();
-    expect(handcashIdentity.provider).toBe('handcash');
-    expect(handcashIdentity.identityKey).toBe(handcashSub.identityKeyHex);
+    // Explicit 'handcash' selection is refused
+    expect(() =>
+      createExplicitWalletAdapter('handcash', {
+        handcashOptions: { brc100Wallet: handcashSub.walletClient },
+      })
+    ).toThrowError(WalletConnectionError);
 
-    // Vendor prefix mismatch guard: If HandCash adapter is handed a Yours substrate, it rejects with PROVIDER_MISMATCH
-    const mismatchedHandCash = new HandCashWalletAdapter({
-      brc100Wallet: yoursSub.walletClient,
-    });
-    await expect(mismatchedHandCash.connect()).rejects.toMatchObject({
-      code: 'PROVIDER_MISMATCH',
-    });
-
-    // And if Yours adapter is handed a HandCash substrate, it rejects with PROVIDER_MISMATCH
+    // A wallet on window.CWI that identifies as HandCash is still refused by the Yours adapter
     const mismatchedYours = new YoursWalletAdapter({
       brc100Wallet: handcashSub.walletClient,
     });
@@ -1056,18 +1056,18 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
 
     // Client supplying mismatched network ('test' when server is 'main') is rejected
     const challengeMismatch = await mainnetAuthService.issueChallenge({
-      provider: 'handcash',
+      provider: 'yours',
       domain: appDomain,
     });
-    const sigMismatch = await handcashAdapter.signChallenge(
+    const sigMismatch = await yoursAdapter.signChallenge(
       challengeMismatch.challengeText
     );
     await expect(
       mainnetAuthService.verifyChallengeAndAuthenticate({
         challengeId: challengeMismatch.id,
-        provider: 'handcash',
+        provider: 'yours',
         publicKey: sigMismatch.publicKey,
-        identityKey: hcConn.identityKey,
+        identityKey: yoursConn.identityKey,
         signature: sigMismatch.signature,
         ...(sigMismatch.keyID ? { keyID: sigMismatch.keyID } : {}),
         network: 'test',
@@ -1080,17 +1080,17 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
 
     // Valid authentication on server's network stores network='main' and payoutScript=null when not explicitly provided
     const challengeValid = await mainnetAuthService.issueChallenge({
-      provider: 'handcash',
+      provider: 'yours',
       domain: appDomain,
     });
-    const sigValid = await handcashAdapter.signChallenge(
+    const sigValid = await yoursAdapter.signChallenge(
       challengeValid.challengeText
     );
     const verified = await mainnetAuthService.verifyChallengeAndAuthenticate({
       challengeId: challengeValid.id,
-      provider: 'handcash',
+      provider: 'yours',
       publicKey: sigValid.publicKey,
-      identityKey: hcConn.identityKey,
+      identityKey: yoursConn.identityKey,
       signature: sigValid.signature,
       ...(sigValid.keyID ? { keyID: sigValid.keyID } : {}),
       expectedDomain: appDomain,
@@ -1251,47 +1251,56 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
     });
   });
 
-  it('18. Preserves explicit provider selection in discoverAvailableWallets + createExplicitWalletAdapter when both Yours and HandCash exist', async () => {
-    const yoursSub = createBRC100WalletSubstrate({
-      seedLabel: 'dual-yours-provider',
-      version: 'yours-2.9.0',
-    });
-    const handcashSub = createBRC100WalletSubstrate({
-      seedLabel: 'dual-handcash-provider',
-      version: 'handcash-1.5.0',
-    });
+  it('18. Accepts any non-HandCash BRC-100 version on window.CWI and waits for late extension injection', async () => {
+    // Undocumented / generic vendor version strings must not block a real Yours wallet
+    expect(isYoursCompatibleVersion('yours-2.9.0')).toBe(true);
+    expect(isYoursCompatibleVersion('wallet-brc100-1.0.0')).toBe(true);
+    expect(isYoursCompatibleVersion('0.4.1')).toBe(true);
+    expect(isYoursCompatibleVersion('HandCash-1.5.0')).toBe(false);
+    expect(isYoursCompatibleVersion('   ')).toBe(false);
 
-    const discoveries = await discoverAvailableWallets({
-      appMode: 'live',
-      yoursOptions: { brc100Wallet: yoursSub.walletClient },
-      handcashOptions: { brc100Wallet: handcashSub.walletClient },
+    const genericSub = createBRC100WalletSubstrate({
+      seedLabel: 'generic-version-yours',
+      version: 'wallet-brc100-1.0.0',
     });
+    const genericConn = await new YoursWalletAdapter({
+      brc100Wallet: genericSub.walletClient,
+    }).connect();
+    expect(genericConn.provider).toBe('yours');
+    expect(genericConn.version).toBe('wallet-brc100-1.0.0');
+    expect(genericConn.capabilities?.canMintOrdinal).toBe(true);
 
-    const yoursEntry = discoveries.find((d) => d.provider === 'yours');
-    const handcashEntry = discoveries.find((d) => d.provider === 'handcash');
-    expect(yoursEntry?.available).toBe(true);
-    expect(yoursEntry?.capabilities?.canMintOrdinal).toBe(true);
-    expect(handcashEntry?.available).toBe(true);
-    expect(handcashEntry?.capabilities?.canMintOrdinal).toBe(true);
-    expect(discoveries.find((d) => d.provider === 'mock')).toBeUndefined();
-
-    expect(() => createExplicitWalletAdapter(undefined)).toThrowError(
-      WalletConnectionError
-    );
-
-    const chosenHandcash = createExplicitWalletAdapter('handcash', {
-      handcashOptions: { brc100Wallet: handcashSub.walletClient },
+    // Simulate a browser where the extension injects window.CWI ~200ms after page load
+    const lateSub = createBRC100WalletSubstrate({
+      seedLabel: 'late-injected-yours',
+      version: 'yours-3.0.0',
     });
-    const hcConn = await chosenHandcash.connect();
-    expect(hcConn.provider).toBe('handcash');
-    expect(hcConn.identityKey).toBe(handcashSub.identityKeyHex);
+    const g = globalThis as unknown as { window?: { CWI?: unknown } };
+    const previousWindow = g.window;
+    g.window = {};
+    const timer = setTimeout(() => {
+      if (g.window) g.window.CWI = lateSub.walletClient;
+    }, 200);
+    try {
+      const adapter = new YoursWalletAdapter({ cwiInjectionWaitMs: 1500 });
+      expect(await adapter.isAvailable()).toBe(true);
+      const lateConn = await adapter.connect();
+      expect(lateConn.identityKey).toBe(lateSub.identityKeyHex);
+      expect(lateConn.capabilities?.connectionTransport).toBe('brc100-cwi');
 
-    const chosenYours = createExplicitWalletAdapter('yours', {
-      yoursOptions: { brc100Wallet: yoursSub.walletClient },
-    });
-    const yConn = await chosenYours.connect();
-    expect(yConn.provider).toBe('yours');
-    expect(yConn.identityKey).toBe(yoursSub.identityKeyHex);
+      // Without the extension at all, connect fails fast after the wait with WALLET_NOT_FOUND
+      g.window = {};
+      await expect(
+        new YoursWalletAdapter({ cwiInjectionWaitMs: 150 }).connect()
+      ).rejects.toMatchObject({ code: 'WALLET_NOT_FOUND' });
+    } finally {
+      clearTimeout(timer);
+      if (previousWindow === undefined) {
+        delete g.window;
+      } else {
+        g.window = previousWindow;
+      }
+    }
   });
 
   it('19. Derives and cryptographically verifies BRC-42 destination keys separate from identityKey, rejecting forged or unproven payoutScripts', async () => {

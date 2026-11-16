@@ -1,5 +1,28 @@
 # Wallet Integration Guide (`docs/WALLET_INTEGRATION.md`)
 
+> **Current status (2026-11-16): Yours Wallet only. HandCash is disabled.**
+>
+> - **Why HandCash is off:** `HandCashWalletAdapter` targets a local HandCash Desktop BRC-100 bridge
+>   (`127.0.0.1:2121` / `:3321`), and no HandCash documentation we could find confirms that bridge exists.
+>   The documented HandCash product, the HandCash Connect cloud SDK (app ID / app secret / redirect
+>   URLs), runs server-side only. In its documented API it cannot sign a challenge with the user's key,
+>   prove a derived payment destination, or mint a 1Sat Ordinal to a user-controlled script, so it
+>   cannot satisfy this app's ownership model (sections 3a and 4).
+> - **How it is switched off:** `src/lib/config/wallet-providers.ts` (`ENABLED_REAL_WALLET_PROVIDERS = ['yours']`).
+>   Discovery does not probe HandCash, `createExplicitWalletAdapter('handcash')` throws, the UI shows no
+>   HandCash card, and `WalletAuthService` rejects HandCash challenges, logins and destination updates with
+>   `403 PROVIDER_DISABLED`. The adapter and its unit tests are kept; re-enable HandCash by adding
+>   `'handcash'` to that list once a supported integration path exists.
+> - **Yours version check:** BRC-100 `getVersion()` strings are vendor-defined and the exact string the
+>   Yours extension reports is not documented. The adapter therefore accepts any non-empty version on
+>   `window.CWI` **except** one that identifies as HandCash (`PROVIDER_MISMATCH`), instead of requiring a
+>   guessed `yours*` / `1sat*` / `babbage*` / `cwi*` prefix. The reported version is shown in the UI.
+> - **Yours injection timing:** `isAvailable()` and `connect()` wait up to 1.5 s
+>   (`YOURS_CWI_INJECTION_WAIT_MS`) for the extension to inject `window.CWI` before falling back to the
+>   legacy `window.yours` interface, which can log in but cannot mint.
+>
+> Sections below that describe HandCash document the retained (disabled) adapter.
+
 ## 1. Shared BRC-100 `WalletAdapter` Architecture
 
 All wallet integrations implement `WalletAdapter` in `src/adapters/wallets/wallet-adapter.ts` using shared helpers in `src/adapters/wallets/brc100-shared.ts`:

@@ -579,7 +579,7 @@ export function AppWalletProvider({
       sessionData?.activeWallet?.provider ?? selectedProvider ?? null;
     if (!provider) {
       setErrorMessage(
-        'No wallet provider selected to reconnect. Choose Yours Wallet, HandCash, or Mock Wallet below.'
+        'No wallet provider selected to reconnect. Choose Yours Wallet (or Mock Wallet in mock mode) below.'
       );
       return;
     }

@@ -10,6 +10,7 @@ import {
   type WalletAdapter,
   WalletConnectionError,
 } from '@/adapters/wallets/wallet-adapter';
+import { isWalletProviderEnabled } from '@/lib/config/wallet-providers';
 import {
   YoursWalletAdapter,
   type YoursWalletAdapterOptions,
@@ -30,19 +31,22 @@ export interface WalletRegistryEnvironment {
  * Discovers which wallet providers are available in the current environment
  * without automatically connecting to any of them.
  *
- * When multiple wallets (e.g., both Yours and HandCash) are installed,
- * both are reported as available and the user MUST explicitly select one.
+ * Only providers enabled in `src/lib/config/wallet-providers.ts` are probed
+ * (HandCash is currently disabled). The user MUST explicitly select a provider.
  */
 export async function discoverAvailableWallets(
   env: WalletRegistryEnvironment = {}
 ): Promise<WalletProviderDiscovery[]> {
   const yoursAdapter = new YoursWalletAdapter(env.yoursOptions);
-  const handcashAdapter = new HandCashWalletAdapter(env.handcashOptions);
   const mockAdapter = new MockWalletAdapter(env.mockOptions);
+  const handcashEnabled = isWalletProviderEnabled('handcash');
+  const handcashAdapter = handcashEnabled
+    ? new HandCashWalletAdapter(env.handcashOptions)
+    : null;
 
   const [yoursAvailable, handcashDiscovery, mockAvailable] = await Promise.all([
     yoursAdapter.isAvailable(),
-    handcashAdapter.discoverBridge(),
+    handcashAdapter ? handcashAdapter.discoverBridge() : Promise.resolve(null),
     mockAdapter.isAvailable(),
   ]);
 
@@ -62,9 +66,12 @@ export async function discoverAvailableWallets(
       capabilities: yoursCapabilities,
       details: yoursAvailable
         ? `Yours Wallet detected (${yoursCapabilities.connectionTransport}) and ready for explicit connection.`
-        : 'Yours Wallet extension / BRC-100 window.CWI not detected.',
+        : 'Yours Wallet extension (BRC-100 window.CWI) not detected. Install or unlock Yours Wallet, then re-scan.',
     },
-    {
+  ];
+
+  if (handcashAdapter && handcashDiscovery) {
+    results.push({
       provider: 'handcash',
       displayName: 'HandCash BRC-100 Wallet',
       available: handcashDiscovery.available,
@@ -72,8 +79,8 @@ export async function discoverAvailableWallets(
       ...(handcashDiscovery.version ? { version: handcashDiscovery.version } : {}),
       capabilities: handcashDiscovery.capabilities ?? handcashAdapter.getCapabilities(),
       details: handcashDiscovery.details,
-    },
-  ];
+    });
+  }
 
   if ((env.appMode ?? 'mock') === 'mock') {
     results.push({
@@ -103,7 +110,7 @@ export function createExplicitWalletAdapter(
     throw new WalletConnectionError(
       'mock',
       'PROVIDER_MISMATCH',
-      'Explicit wallet provider selection is required ("yours", "handcash", or "mock"). Automatic provider selection is disabled.'
+      'Explicit wallet provider selection is required ("yours" or "mock"). Automatic provider selection is disabled.'
     );
   }
 
@@ -111,6 +118,13 @@ export function createExplicitWalletAdapter(
     case 'yours':
       return new YoursWalletAdapter(env.yoursOptions);
     case 'handcash':
+      if (!isWalletProviderEnabled('handcash')) {
+        throw new WalletConnectionError(
+          'handcash',
+          'PROVIDER_MISMATCH',
+          'HandCash is currently disabled. Connect with Yours Wallet.'
+        );
+      }
       return new HandCashWalletAdapter(env.handcashOptions);
     case 'mock': {
       if (env.appMode === 'live') {

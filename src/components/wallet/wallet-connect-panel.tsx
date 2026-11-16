@@ -74,7 +74,6 @@ export function WalletConnectPanel({
   }, [appMode, bsvNetwork, syncRuntimeConfig]);
 
   const yoursInfo = getDiscoveryFor(discoveredProviders, 'yours');
-  const handcashInfo = getDiscoveryFor(discoveredProviders, 'handcash');
   const mockInfo = getDiscoveryFor(discoveredProviders, 'mock');
   const isAuthenticated = Boolean(sessionData?.authenticated);
 
@@ -162,7 +161,7 @@ export function WalletConnectPanel({
 
       <div
         className={`mt-5 grid gap-4 ${
-          appMode === 'mock' ? 'md:grid-cols-3' : 'md:grid-cols-2'
+          appMode === 'mock' ? 'md:grid-cols-2' : 'md:grid-cols-1'
         }`}
       >
         {/* Yours Wallet Card */}
@@ -201,53 +200,6 @@ export function WalletConnectPanel({
               : isAuthenticated
                 ? 'Connect / Link Yours Wallet'
                 : 'Connect Yours Wallet'}
-          </button>
-        </div>
-
-        {/* HandCash BRC Wallet Card */}
-        <div className="flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/60 p-4">
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-white">
-                HandCash Wallet
-              </h3>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  handcashInfo?.available
-                    ? 'bg-emerald-500/15 text-emerald-300'
-                    : 'bg-slate-800 text-slate-400'
-                }`}
-              >
-                {handcashInfo?.available
-                  ? handcashInfo.version ?? 'brc100-http'
-                  : 'Bridge offline'}
-              </span>
-            </div>
-            <p className="mt-2 text-xs text-slate-400">
-              {handcashInfo?.details ??
-                'HandCash Desktop BRC-100 bridge (https://127.0.0.1:2121 / http://127.0.0.1:3321).'}
-            </p>
-            <p className="mt-1.5 text-[11px] text-slate-500">
-              Requires HandCash Desktop running &amp; unlocked. HandCash Mobile
-              alone does not expose a local BRC-100 JSON bridge.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void connectAndAuthenticate('handcash')}
-            disabled={busyAction !== null}
-            className={`mt-4 w-full rounded-lg px-3 py-2 text-xs font-semibold transition ${
-              selectedProvider === 'handcash' && isAuthenticated
-                ? 'border border-sky-500/40 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
-                : 'bg-sky-600 text-white hover:bg-sky-500'
-            } disabled:opacity-50`}
-          >
-            {busyAction === 'connect:handcash'
-              ? 'Connecting HandCash...'
-              : isAuthenticated
-                ? 'Connect / Link HandCash'
-                : 'Connect HandCash'}
           </button>
         </div>
 
