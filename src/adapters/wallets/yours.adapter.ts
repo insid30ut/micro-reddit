@@ -336,18 +336,31 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        if (!promptUser) {
-          // Silent reconnect: isAuthenticated() never opens the Yours popup, whereas
-          // waitForAuthentication()/getPublicKey() open the unlock popup when locked.
-          const { authenticated } = await candidateBrc100.isAuthenticated({});
-          if (!authenticated) {
-            throw new WalletConnectionError(
-              'yours',
-              'WALLET_LOCKED',
-              'Yours Wallet is locked. Click Connect Yours Wallet to unlock it.'
-            );
+        // isAuthenticated() never opens Yours UI; waitForAuthentication()/getPublicKey()
+        // open the Yours unlock window when the wallet is locked.
+        let alreadyUnlocked: boolean | null = null;
+        try {
+          alreadyUnlocked = (await candidateBrc100.isAuthenticated({})).authenticated;
+        } catch (probeErr) {
+          if (!promptUser) {
+            throw probeErr;
           }
+          alreadyUnlocked = null; // unknown: let waitForAuthentication decide
         }
+
+        if (!promptUser && !alreadyUnlocked) {
+          throw new WalletConnectionError(
+            'yours',
+            'WALLET_LOCKED',
+            'Yours Wallet is locked. Click Connect Yours Wallet to unlock it.'
+          );
+        }
+
+        options.onStage?.({
+          stage: alreadyUnlocked ? 'awaiting-approval' : 'awaiting-unlock',
+          version,
+          transport: 'brc100-cwi',
+        });
 
         // Opens the Yours unlock (password) popup if the wallet is locked and resolves once
         // the user has unlocked it.
@@ -425,6 +438,7 @@ export class YoursWalletAdapter implements WalletAdapter {
           'Yours Wallet needs to be reconnected. Click Connect Yours Wallet.'
         );
       }
+      options.onStage?.({ stage: 'awaiting-unlock', transport: 'legacy-yours' });
       try {
         // Legacy extension: connect() opens the Yours popup for unlock / site approval.
         await withUnlockTimeout(

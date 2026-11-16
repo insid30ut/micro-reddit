@@ -19,7 +19,29 @@ import {
 import {
   WalletConnectionError,
   type WalletAdapter,
+  type WalletConnectStage,
 } from '@/adapters/wallets/wallet-adapter';
+
+/**
+ * Plain-language instructions for what the Yours extension is waiting for. Yours opens its
+ * password / approval prompt as a separate small browser window (not the toolbar dropdown),
+ * which can open behind this window, on another monitor, or in another desktop Space when
+ * Chrome is full-screen. Unlocking from the toolbar icon also resumes a waiting request.
+ */
+export function describeYoursConnectStage(stage: WalletConnectStage): string {
+  const versionNote = stage.version ? ` (detected ${stage.version})` : '';
+  if (stage.stage === 'awaiting-unlock') {
+    return (
+      `Yours Wallet is locked${versionNote}. Enter your password in the small "Yours Wallet" window it opens. ` +
+      `If you don't see it, it may be behind this browser window, on another screen, or in another desktop if Chrome is full-screen. ` +
+      `You can also click the Yours Wallet icon in your browser toolbar and unlock there; sign-in continues automatically.`
+    );
+  }
+  return (
+    `Yours Wallet is unlocked${versionNote}. Approve the request in the small "Yours Wallet" window ` +
+    `(it may be behind this browser window or on another screen).`
+  );
+}
 import type {
   MintOrdinalInput,
   MintResult,
@@ -340,12 +362,10 @@ export function AppWalletProvider({
           return;
         }
 
-        if (promptUser && provider === 'yours') {
-          setStatusMessage(
-            'Check the Yours Wallet popup and enter your password to unlock it.'
-          );
-        }
-        const conn = await adapter.connect({ promptUser });
+        const conn = await adapter.connect({
+          promptUser,
+          onStage: (stage) => setStatusMessage(describeYoursConnectStage(stage)),
+        });
         if (conn.identityKey !== sessionWallet.identityKey) {
           activeAdapterRef.current = null;
           setActiveAdapter(null);
@@ -470,12 +490,13 @@ export function AppWalletProvider({
           );
         }
 
-        if (provider === 'yours') {
-          setStatusMessage(
-            'Check the Yours Wallet popup: enter your password to unlock it, then approve the sign-in request.'
-          );
-        }
-        const connection = await adapter.connect({ promptUser: true });
+        setStatusMessage(
+          provider === 'yours' ? 'Contacting the Yours Wallet extension...' : null
+        );
+        const connection = await adapter.connect({
+          promptUser: true,
+          onStage: (stage) => setStatusMessage(describeYoursConnectStage(stage)),
+        });
         setConnectionState('authenticating');
 
         const challengeResponse = await fetch('/api/auth/challenge', {
@@ -501,6 +522,11 @@ export function AppWalletProvider({
           );
         }
 
+        if (provider === 'yours') {
+          setStatusMessage(
+            'Approve the sign-in signature in the small "Yours Wallet" window (it may be behind this browser window or on another screen).'
+          );
+        }
         const signatureResult = await adapter.signChallenge(
           challengePayload.challengeText
         );

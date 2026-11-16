@@ -1955,15 +1955,22 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
 
     // Clicking Connect Yours Wallet opens the popup and connects after unlock
     const adapter = new YoursWalletAdapter({ brc100Wallet: lockedWallet });
-    const conn = await adapter.connect();
+    const stages: string[] = [];
+    const conn = await adapter.connect({
+      onStage: (s) => stages.push(`${s.stage}:${s.version ?? ''}`),
+    });
+    expect(stages).toEqual(['awaiting-unlock:yours-wallet-5.1.1']);
     expect(unlockPopupsOpened).toBe(1);
     expect(conn.identityKey).toBe(base.identityKeyHex);
     expect(conn.version).toBe('yours-wallet-5.1.1');
 
     // Once unlocked, a silent reconnect succeeds without any popup
+    const unlockedStages: string[] = [];
     const silent = await new YoursWalletAdapter({ brc100Wallet: lockedWallet }).connect({
       promptUser: false,
+      onStage: (s) => unlockedStages.push(s.stage),
     });
+    expect(unlockedStages).toEqual(['awaiting-approval']);
     expect(silent.identityKey).toBe(base.identityKeyHex);
     expect(unlockPopupsOpened).toBe(1);
 
