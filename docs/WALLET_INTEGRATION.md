@@ -20,6 +20,15 @@
 > - **Yours injection timing:** `isAvailable()` and `connect()` wait up to 1.5 s
 >   (`YOURS_CWI_INJECTION_WAIT_MS`) for the extension to inject `window.CWI` before falling back to the
 >   legacy `window.yours` interface, which can log in but cannot mint.
+> - **Yours unlock popup (sign-in):** Yours Wallet v5 injects only `window.CWI`. Its `getVersion()` returns
+>   `yours-wallet-<extension version>` without needing an unlock, and `isAuthenticated()` never opens UI.
+>   `waitForAuthentication()` / `getPublicKey()` open the Yours **unlock (password) popup** when the wallet
+>   is locked and resolve once it is unlocked. Clicking **Connect Yours Wallet** (or **Reconnect Wallet**)
+>   calls `connect({ promptUser: true })`, which calls `waitForAuthentication()` first, so the user is
+>   asked for their password. Signing the server challenge then shows the Yours approval prompt. Page-load
+>   session rehydration calls `connect({ promptUser: false })`, which only uses `isAuthenticated()` and
+>   never opens a popup unprompted. The unlock wait is bounded by `YOURS_UNLOCK_TIMEOUT_MS` (2 minutes)
+>   so an abandoned popup cannot leave the UI stuck.
 >
 > Sections below that describe HandCash document the retained (disabled) adapter.
 

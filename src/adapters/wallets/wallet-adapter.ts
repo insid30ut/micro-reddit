@@ -17,12 +17,21 @@ import type {
  * Normalized WalletAdapter interface required by POC_BLUEPRINT.md Section 5.3
  * and the shared BRC-100 wallet completion specification.
  */
+export interface WalletConnectOptions {
+  promptUser?: boolean;
+}
+
 export interface WalletAdapter {
   readonly provider: WalletProviderType;
 
   isAvailable(): Promise<boolean>;
 
-  connect(): Promise<WalletConnectionResult>;
+  /**
+   * Connects to the wallet. With `promptUser: false` the adapter must not open any wallet
+   * UI (unlock/password popup); it throws `WALLET_LOCKED` instead if the wallet needs the
+   * user. Used for silent reconnects on page load. Defaults to `promptUser: true`.
+   */
+  connect(options?: WalletConnectOptions): Promise<WalletConnectionResult>;
 
   disconnect(): Promise<void>;
 

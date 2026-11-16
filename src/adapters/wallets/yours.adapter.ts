@@ -10,6 +10,7 @@ import {
 import {
   UnsupportedWalletOperationError,
   type WalletAdapter,
+  type WalletConnectOptions,
   WalletConnectionError,
 } from '@/adapters/wallets/wallet-adapter';
 import {
@@ -94,6 +95,8 @@ export interface YoursWalletAdapterOptions {
   envSource?: Record<string, string | undefined>;
   /** How long to wait for the extension to inject window.CWI (defaults to YOURS_CWI_INJECTION_WAIT_MS) */
   cwiInjectionWaitMs?: number;
+  /** How long to wait for the user to unlock Yours in its popup (defaults to YOURS_UNLOCK_TIMEOUT_MS) */
+  unlockTimeoutMs?: number;
 }
 
 function getBrowserYoursExtension(): YoursInjectedExtension | undefined {
@@ -122,6 +125,33 @@ function hasBrowserWindowCWI(): boolean {
  */
 export const YOURS_CWI_INJECTION_WAIT_MS = 1500;
 const YOURS_CWI_POLL_INTERVAL_MS = 100;
+
+/**
+ * How long connect() waits for the user to enter their password in the Yours unlock popup.
+ * Yours queues `waitForAuthentication` until the wallet is unlocked and (as far as its
+ * source shows) does not reject it when the popup is closed, so we bound the wait.
+ */
+export const YOURS_UNLOCK_TIMEOUT_MS = 120_000;
+
+async function withUnlockTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new WalletConnectionError(
+          'yours',
+          'WALLET_LOCKED',
+          'Timed out waiting for Yours Wallet to be unlocked. Click Connect Yours Wallet again and enter your password in the Yours popup.'
+        )
+      );
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 async function waitForBrowserWindowCWI(timeoutMs: number): Promise<boolean> {
   if (hasBrowserWindowCWI()) {
@@ -280,7 +310,10 @@ export class YoursWalletAdapter implements WalletAdapter {
     return false;
   }
 
-  public async connect(): Promise<WalletConnectionResult> {
+  public async connect(
+    options: WalletConnectOptions = {}
+  ): Promise<WalletConnectionResult> {
+    const promptUser = options.promptUser !== false;
     // Path 1: Explicit BRC-100 WalletInterface or browser `window.CWI`
     const candidateBrc100 =
       this.options.preferLegacyExtension
@@ -303,7 +336,25 @@ export class YoursWalletAdapter implements WalletAdapter {
           );
         }
 
-        const authRes = await candidateBrc100.waitForAuthentication({});
+        if (!promptUser) {
+          // Silent reconnect: isAuthenticated() never opens the Yours popup, whereas
+          // waitForAuthentication()/getPublicKey() open the unlock popup when locked.
+          const { authenticated } = await candidateBrc100.isAuthenticated({});
+          if (!authenticated) {
+            throw new WalletConnectionError(
+              'yours',
+              'WALLET_LOCKED',
+              'Yours Wallet is locked. Click Connect Yours Wallet to unlock it.'
+            );
+          }
+        }
+
+        // Opens the Yours unlock (password) popup if the wallet is locked and resolves once
+        // the user has unlocked it.
+        const authRes = await withUnlockTimeout(
+          candidateBrc100.waitForAuthentication({}),
+          this.options.unlockTimeoutMs ?? YOURS_UNLOCK_TIMEOUT_MS
+        );
         if (
           (authRes as { authenticated?: boolean } | null)?.authenticated ===
           false
@@ -367,8 +418,19 @@ export class YoursWalletAdapter implements WalletAdapter {
     // Path 2: Legacy Injected `window.yours` extension (authentication-only fallback)
     const extension = this.options.injectedExtension ?? getBrowserYoursExtension();
     if (extension) {
+      if (!promptUser) {
+        throw new WalletConnectionError(
+          'yours',
+          'WALLET_LOCKED',
+          'Yours Wallet needs to be reconnected. Click Connect Yours Wallet.'
+        );
+      }
       try {
-        await extension.connect();
+        // Legacy extension: connect() opens the Yours popup for unlock / site approval.
+        await withUnlockTimeout(
+          extension.connect(),
+          this.options.unlockTimeoutMs ?? YOURS_UNLOCK_TIMEOUT_MS
+        );
         const pubKeys = await extension.getPubKeys();
         const normalizedIdentityKey = pubKeys.identityPubKey?.trim().toLowerCase();
         if (!normalizedIdentityKey || !isValidCompressedPublicKey(normalizedIdentityKey)) {

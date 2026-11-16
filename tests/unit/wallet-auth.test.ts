@@ -1923,4 +1923,60 @@ describe('Phase 2 — Persistent Wallet Authentication & Security Audit', () => 
       code: 'AUTHENTICATION_FAILED',
     });
   });
+  it('23. Opens the Yours unlock popup only on explicit connect, never on silent page-load reconnect, and times out if the popup is abandoned', async () => {
+    const base = createBRC100WalletSubstrate({
+      seedLabel: 'locked-yours-wallet',
+      version: 'yours-wallet-5.1.1',
+    });
+    let unlocked = false;
+    let unlockPopupsOpened = 0;
+    const lockedWallet = {
+      ...(base.walletClient as unknown as Record<string, unknown>),
+      async isAuthenticated() {
+        return { authenticated: unlocked };
+      },
+      // Mirrors Yours v5: when locked, waitForAuthentication opens the unlock popup and
+      // resolves once the user enters their password.
+      async waitForAuthentication() {
+        if (!unlocked) {
+          unlockPopupsOpened += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          unlocked = true; // user typed their password
+        }
+        return { authenticated: true };
+      },
+    } as unknown as WalletInterface;
+
+    // Silent (page-load) reconnect must not open the popup
+    await expect(
+      new YoursWalletAdapter({ brc100Wallet: lockedWallet }).connect({ promptUser: false })
+    ).rejects.toMatchObject({ code: 'WALLET_LOCKED' });
+    expect(unlockPopupsOpened).toBe(0);
+
+    // Clicking Connect Yours Wallet opens the popup and connects after unlock
+    const adapter = new YoursWalletAdapter({ brc100Wallet: lockedWallet });
+    const conn = await adapter.connect();
+    expect(unlockPopupsOpened).toBe(1);
+    expect(conn.identityKey).toBe(base.identityKeyHex);
+    expect(conn.version).toBe('yours-wallet-5.1.1');
+
+    // Once unlocked, a silent reconnect succeeds without any popup
+    const silent = await new YoursWalletAdapter({ brc100Wallet: lockedWallet }).connect({
+      promptUser: false,
+    });
+    expect(silent.identityKey).toBe(base.identityKeyHex);
+    expect(unlockPopupsOpened).toBe(1);
+
+    // If the user abandons the popup, connect fails with a clear message instead of hanging
+    const abandonedWallet = {
+      ...(base.walletClient as unknown as Record<string, unknown>),
+      waitForAuthentication: () => new Promise(() => {}),
+    } as unknown as WalletInterface;
+    await expect(
+      new YoursWalletAdapter({ brc100Wallet: abandonedWallet, unlockTimeoutMs: 50 }).connect()
+    ).rejects.toMatchObject({
+      code: 'WALLET_LOCKED',
+      message: expect.stringContaining('Timed out waiting for Yours Wallet to be unlocked'),
+    });
+  });
 });

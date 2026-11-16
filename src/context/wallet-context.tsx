@@ -288,7 +288,13 @@ export function AppWalletProvider({
   }, []);
 
   const attemptWalletRehydrate = useCallback(
-    async (session: SessionApiResponse): Promise<void> => {
+    async (
+      session: SessionApiResponse,
+      options: { promptUser?: boolean } = {}
+    ): Promise<void> => {
+      // Page-load rehydration is silent (never opens the wallet's unlock popup); only an
+      // explicit user click (Reconnect Wallet) passes promptUser: true.
+      const promptUser = options.promptUser === true;
       const sessionWallet = session.activeWallet;
       if (!session.authenticated || !sessionWallet) {
         activeAdapterRef.current = null;
@@ -334,7 +340,12 @@ export function AppWalletProvider({
           return;
         }
 
-        const conn = await adapter.connect();
+        if (promptUser && provider === 'yours') {
+          setStatusMessage(
+            'Check the Yours Wallet popup and enter your password to unlock it.'
+          );
+        }
+        const conn = await adapter.connect({ promptUser });
         if (conn.identityKey !== sessionWallet.identityKey) {
           activeAdapterRef.current = null;
           setActiveAdapter(null);
@@ -384,7 +395,9 @@ export function AppWalletProvider({
         setActiveWalletInterface(null);
         setConnectionState('reauth_required');
         setStatusMessage(
-          `Server session restored, but live ${provider} adapter requires reconnection: ${formatWalletError(err)}`
+          promptUser
+            ? `Could not reconnect ${provider} wallet: ${formatWalletError(err)}`
+            : `You are signed in, but your ${provider} wallet is locked or disconnected in this tab. Click Reconnect Wallet to unlock it.`
         );
       }
     },
@@ -457,7 +470,12 @@ export function AppWalletProvider({
           );
         }
 
-        const connection = await adapter.connect();
+        if (provider === 'yours') {
+          setStatusMessage(
+            'Check the Yours Wallet popup: enter your password to unlock it, then approve the sign-in request.'
+          );
+        }
+        const connection = await adapter.connect({ promptUser: true });
         setConnectionState('authenticating');
 
         const challengeResponse = await fetch('/api/auth/challenge', {
@@ -566,6 +584,7 @@ export function AppWalletProvider({
         setActiveAdapter(null);
         setActiveWalletInterface(null);
         setConnectionState('error');
+        setStatusMessage(null);
         setErrorMessage(formatWalletError(err));
       } finally {
         setBusyAction(null);
@@ -587,7 +606,7 @@ export function AppWalletProvider({
     if (sessionData?.authenticated && sessionData.activeWallet) {
       setBusyAction('reconnect');
       setErrorMessage(null);
-      await attemptWalletRehydrate(sessionData);
+      await attemptWalletRehydrate(sessionData, { promptUser: true });
       await refreshDiscovery();
       setBusyAction(null);
       return;
